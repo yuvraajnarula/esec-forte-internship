@@ -94,7 +94,6 @@ async function dataInjection(dbName) {
         for (const record of records) {
             let recordPrice = record.actual_price.replace(',', '');
             recordPrice = recordPrice.replace('₹', '');
-            if (dataEntries.length === 0) console.log('First record:', record, recordPrice);
             let data = {
                 productName: record.sub_category || 'Unknown',
                 productBrand: record.name?.split(' ')[0] || 'Unknown',
@@ -107,7 +106,6 @@ async function dataInjection(dbName) {
                 createdAt: faker.date.past(),
                 updatedAt: new Date()
             }
-            if (dataEntries.length === 0) console.log('First record:', data, record);
             dataEntries.push(data);
         }
 
