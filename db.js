@@ -1,7 +1,9 @@
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
 const { faker } = require('@faker-js/faker');
-
+const path = require('path');
+const fs = require('fs');
+const csv = require('csv-parse/sync'); // Add this at the top with other requires
 const sequelize = new Sequelize(
     process.env.DB_NAME,
     process.env.DB_USER,
@@ -66,8 +68,6 @@ async function dataInjection(dbName) {
             )
         `);
         console.log(`Table 'products' created successfully.`);
-
-        // Check if table already has records
         const [countResult] = await sequelize.query(
             `SELECT COUNT(*) as count FROM products`,
             {
@@ -80,26 +80,36 @@ async function dataInjection(dbName) {
         }
 
         const dataEntries = [];
-        for (let i = 0; i < rows; i++) {
-            dataEntries.push({
-                productName: faker.commerce.productName(),
-                productBrand: faker.company.name(),
-                price: faker.commerce.price({ min: 100 }),
-                // description: faker.commerce.productDescription(),
-                imageUrl: faker.image.urlLoremFlickr({
-                    category: faker.commerce.product(),
-                    width: 640,
-                    height: 480,
-                    count: 1,
-                }),
-                category: faker.commerce.product(),
-                stock: faker.number.int({ min: 0, max: 100 }),
-                rating: faker.number.float({ min: 0, max: 5, fractionDigits: 1 }),
+        let i = 0;
+        // read csv file and parse it for data injection
+        const csvFilePath = path.join(__dirname, 'amazon-products.csv');
+        const csvFile = fs.readFileSync(csvFilePath, 'utf8');
+        const records = csv.parse(csvFile, {
+            columns: true,
+            skip_empty_lines: true,
+            relax_quotes: true,
+            trim: true
+        });
+
+        for (const record of records) {
+            let recordPrice = record.actual_price.replace(',', '');
+            recordPrice = recordPrice.replace('₹', '');
+            if (dataEntries.length === 0) console.log('First record:', record, recordPrice);
+            let data = {
+                productName: record.sub_category || 'Unknown',
+                productBrand: record.name?.split(' ')[0] || 'Unknown',
+                price: parseFloat(recordPrice) || faker.commerce.price({ min: 100 }),
+                description: record.name || '',
+                imageUrl: record.image || '',
+                category: record.main_category || 'Uncategorized',
+                stock: Math.floor(Math.random() * 1000),
+                rating: parseFloat(record.ratings) || faker.number.float({ min: 1, max: 5, fractionDigits: 1 }),
                 createdAt: faker.date.past(),
-                updatedAt: faker.date.recent(),
-            });
+                updatedAt: new Date()
+            }
+            if (dataEntries.length === 0) console.log('First record:', data, record);
+            dataEntries.push(data);
         }
-        console.log(`Generated ${rows} fake product entries.`);
 
         for (let i = 0; i < dataEntries.length; i += BATCH_SIZE) {
             const batch = dataEntries.slice(i, i + BATCH_SIZE);
