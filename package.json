@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "dev" : "nodemon server.js"
+    "dev": "nodemon server.js"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"
