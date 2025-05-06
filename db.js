@@ -3,7 +3,7 @@ const { Sequelize } = require('sequelize');
 const { faker } = require('@faker-js/faker');
 const path = require('path');
 const fs = require('fs');
-const csv = require('csv-parse/sync'); // Add this at the top with other requires
+const csv = require('csv-parse/sync'); 
 const sequelize = new Sequelize(
     process.env.DB_NAME,
     process.env.DB_USER,
@@ -109,7 +109,7 @@ async function dataInjection(dbName) {
             dataEntries.push(data);
         }
 
-        for (let i = 0; i < dataEntries.length; i += BATCH_SIZE) {
+        for (let i = 0; i < rows; i += BATCH_SIZE) {
             const batch = dataEntries.slice(i, i + BATCH_SIZE);
             const values = batch.map(entry => `(
                 ${sequelize.escape(entry.productName)},
