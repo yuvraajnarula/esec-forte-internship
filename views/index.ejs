@@ -1,10 +1,9 @@
 <div class="upload-container">
   <h1>Submit your report here</h1>
   <form action="/file/submit" method="POST" enctype="multipart/form-data">
-    <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
     <label for="report-file" class="file-label">Select a file</label>
+    <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
     <div class="file-name" id="file-name">No file chosen</div>
-
     <button type="submit">Submit</button>
   </form>
 </div>
