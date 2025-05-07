@@ -4,7 +4,17 @@ const app = express();
 const {
     databaseExists, createDatabase, dataInjection 
 } = require('./db.js');
+const expressLayouts = require('express-ejs-layouts');
+const indexRoute = require('./routes/indexRoute.js');
+const fileRoute = require('./routes/fileRoute.js');
+
 app.use(express.json());
+app.set('view engine', 'ejs');
+app.use(expressLayouts);
+
+app.use('/', indexRoute);
+app.use('/file', fileRoute);
+
 app.listen(process.env.PORT || 3000,async()=>{
     console.log(`Server is running on port ${process.env.PORT || 3000}`);
     await databaseExists(process.env.DB_NAME).then(async (exists) => {

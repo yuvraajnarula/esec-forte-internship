@@ -1,0 +1,32 @@
+<div class="upload-container">
+  <h1>Submit your report here</h1>
+  <form action="/file/submit" method="POST" enctype="multipart/form-data">
+    <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
+    <label for="report-file" class="file-label">Select a file</label>
+    <div class="file-name" id="file-name">No file chosen</div>
+
+    <button type="submit">Submit</button>
+  </form>
+</div>
+<script>
+  // Show the selected file name under the label
+  const fileInput = document.getElementById('report-file');
+  const fileNameDiv = document.getElementById('file-name');
+
+  fileInput.addEventListener('change', () => {
+    const name = fileInput.files.length ?
+      fileInput.files[0].name :
+      'No file chosen';
+    fileNameDiv.textContent = name;
+    fileNameDiv.style.visibility = fileInput.files.length ? 'visible' : 'hidden';
+    fileNameDiv.style.fontSize = fileInput.files.length ? '0.9em' : '0';
+    fileNameDiv.style.minHeight = fileInput.files.length ? '1.2em' : '0';
+    fileNameDiv.style.transition = 'font-size 0.2s, min-height 0.2s, visibility 0.2s';
+    fileNameDiv.style.marginBottom = fileInput.files.length ? '1.2em' : '0';
+    fileNameDiv.style.padding = fileInput.files.length ? '10px' : '0';
+    fileNameDiv.style.border = fileInput.files.length ? '1px solid #999' : '0';
+    fileNameDiv.style.borderRadius = fileInput.files.length ? '4px' : '0';
+    fileNameDiv.style.background = fileInput.files.length ? 'linear-gradient(to top, #f9f9f9, #e3e3e3)' : 'none';
+
+  });
+</script>
