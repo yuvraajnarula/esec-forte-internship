@@ -53,94 +53,38 @@ async function dataInjection(dbName) {
         console.log(`Database ${dbName} selected successfully.`);
 
         await sequelize.query(`
-            CREATE TABLE IF NOT EXISTS products (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                productName VARCHAR(255) NOT NULL,
-                productBrand VARCHAR(255) NOT NULL,
-                price FLOAT NOT NULL CHECK (price > 0),
-                description TEXT,
-                imageUrl VARCHAR(255),
-                category VARCHAR(255),
-                stock INT DEFAULT 0 CHECK (stock >= 0),
-                rating FLOAT DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
-                createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-            )
+            CREATE TABLE IF NOT EXISTS issue_master (
+                issue_master_id INT NOT NULL AUTO_INCREMENT,
+                issue_master_key varchar(30) DEFAULT NULL,
+                issue_title VARCHAR(255) NOT NULL,
+                description text NOT NULL,
+                impact TEXT,
+                recommendation text,
+                owasp_ref_no text CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci,
+                cwe_cve_ref_no varchar(255) DEFAULT NULL,
+                appl_type int NOT NULL DEFAULT '-1',
+                audit_methodology_type int NOT NULL DEFAULT '200',
+                created_by_id int NOT NULL,
+                created_on datetime NOT NULL,
+                updated_on datetime DEFAULT NULL,
+                is_updated enum('1', '0') DEFAULT '0',
+                updated_by_user enum('yes', 'no') DEFAULT 'no',
+                deleted_on datetime DEFAULT NULL,
+                PRIMARY KEY (issue_master_id),
+                KEY issue_master_id (issue_master_id)
+            ) ENGINE = InnoDB AUTO_INCREMENT = 68 DEFAULT CHARSET = utf8mb3
         `);
-        console.log(`Table 'products' created successfully.`);
+        console.log(`Table 'issue_master' created successfully.`);
         const [countResult] = await sequelize.query(
-            `SELECT COUNT(*) as count FROM products`,
+            `SELECT COUNT(*) as count FROM issue_master`,
             {
                 type: Sequelize.QueryTypes.SELECT
             }
         );
         if (countResult.count > 0) {
-            console.log('Table "products" already contains data. Skipping data injection.');
+            console.log('Table "issue_master" already contains data. Skipping data injection.');
             return;
         }
-
-        const dataEntries = [];
-        let i = 0;
-        // read csv file and parse it for data injection
-        const csvFilePath = path.join(__dirname, 'amazon-products.csv');
-        const csvFile = fs.readFileSync(csvFilePath, 'utf8');
-        const records = csv.parse(csvFile, {
-            columns: true,
-            skip_empty_lines: true,
-            relax_quotes: true,
-            trim: true
-        });
-
-        for (const record of records) {
-            let recordPrice = record.actual_price.replace(',', '');
-            recordPrice = recordPrice.replace('₹', '');
-            let data = {
-                productName: record.sub_category || 'Unknown',
-                productBrand: record.name?.split(' ')[0] || 'Unknown',
-                price: parseFloat(recordPrice) || faker.commerce.price({ min: 100 }),
-                description: record.name || '',
-                imageUrl: record.image || '',
-                category: record.main_category || 'Uncategorized',
-                stock: Math.floor(Math.random() * 1000),
-                rating: parseFloat(record.ratings) || faker.number.float({ min: 1, max: 5, fractionDigits: 1 }),
-                createdAt: faker.date.past(),
-                updatedAt: new Date()
-            }
-            dataEntries.push(data);
-        }
-
-        for (let i = 0; i < rows; i += BATCH_SIZE) {
-            const batch = dataEntries.slice(i, i + BATCH_SIZE);
-            const values = batch.map(entry => `(
-                ${sequelize.escape(entry.productName)},
-                ${sequelize.escape(entry.productBrand)},
-                ${entry.price},
-                ${sequelize.escape(entry.description)},
-                ${sequelize.escape(entry.imageUrl)},
-                ${sequelize.escape(entry.category)},
-                ${entry.stock},
-                ${entry.rating},
-                '${entry.createdAt.toISOString().slice(0, 19).replace('T', ' ')}',
-                '${entry.updatedAt.toISOString().slice(0, 19).replace('T', ' ')}'
-            )`).join(',');
-
-            await sequelize.query(`
-                INSERT INTO products (
-                    productName,
-                    productBrand,
-                    price,
-                    description,
-                    imageUrl,
-                    category,
-                    stock,
-                    rating,
-                    createdAt,
-                    updatedAt
-                ) VALUES ${values}
-            `);
-            console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1} inserted (${batch.length} rows).`);
-        }
-        console.log(`All rows inserted successfully.`);
     } catch (error) {
         console.error('Error during data injection:', error);
     } 
