@@ -4,11 +4,82 @@ const multer = require('multer');
 const xlsx = require('xlsx');
 const fs = require('fs');
 const router = express.Router();
+
+const UPLOADS_DIR = path.join(__dirname, '../uploads/');
+
 const upload = multer({
-    dest: path.join(__dirname, '../uploads/'),
+    dest: UPLOADS_DIR,
     limits: { fileSize: 20 * 1024 * 1024 },
 });
 const { sequelize } = require('../db.js');
+
+const vulnerabilities = [
+    "SQL Injection (SQLi)",
+    "Cross-Site Scripting (XSS)",
+    "Cross-Site Request Forgery (CSRF)",
+    "Broken Authentication and Session Management",
+    "Insecure Direct Object References (IDOR)",
+    "Security Misconfiguration",
+    "Sensitive Data Exposure",
+    "Using Components with Known Vulnerabilities",
+    "Insecure Deserialization",
+    "Insufficient Logging & Monitoring",
+    "Server-Side Request Forgery (SSRF)",
+    "XML External Entity (XXE) Injection",
+    "Unvalidated Redirects & Forwards",
+    "Privilege Escalation",
+    "Business Logic Flaws",
+    "API Vulnerabilities",
+    "Inadequate Input Validation",
+    "Weak Password Policies",
+    "Unencrypted Sensitive Data at Rest",
+    "Improper Error Handling",
+    "Directory Traversal",
+    "Clickjacking",
+    "Memory Corruption (Buffer Overflows)",
+    "Race Conditions",
+    "Certificate & TLS Misconfigurations",
+    "Open Redirects",
+    "Hard-Coded Credentials",
+    "Insufficient Session Expiration",
+    "Client-Side Security Bypass",
+    "Cloud Misconfigurations"
+];  
+
+// Helper function to safely download a file
+function downloadFile(filename, rows) {
+    try {
+        const name = path.basename(filename);
+        const safeFilename = name.replace(/[^a-zA-Z0-9_.-]/g, '_');
+        const now = new Date();
+        const timestamp = `${now.getMinutes()}_${now.getSeconds()}`;
+        const filenameWithTimestamp = `${safeFilename.replace(/\.xlsx$/, '')}_${timestamp}.ods`;
+        
+        const newName = path.join(UPLOADS_DIR, filenameWithTimestamp);
+        
+        const colHeaders = [
+            'issue_master_id',
+            'issue_master_key', 'issue_title', 'description', 'impact',
+            'recommendation', 'owasp_ref_no', 'cwe_cve_ref_no',
+            'appl_type', 'audit_methodology_type', 'created_by_id',
+            'created_on', 'is_updated', 'updated_by_user',
+            'deleted_on'
+        ];
+        
+        const newWorkbook = xlsx.utils.book_new();
+        const newSheet = xlsx.utils.json_to_sheet(rows, { header: colHeaders });
+        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Valid Rows');
+        xlsx.writeFile(newWorkbook, newName);
+        
+        return {
+            downloadName: path.basename(newName),
+            filePath: newName
+        };
+    } catch (err) {
+        console.error('Error creating download file:', err);
+        throw new Error(`Failed to create download file: ${err.message}`);
+    }
+}
 
 router.post('/submit', upload.single('file'), async (req, res) => {
     let tempFilePath = null;
@@ -16,6 +87,11 @@ router.post('/submit', upload.single('file'), async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).send('No file uploaded.');
+        }
+
+        const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+        if (req.file.size > MAX_FILE_SIZE) {
+            return res.status(400).send('File size exceeds 20MB limit');
         }
 
         tempFilePath = req.file.path;
@@ -26,7 +102,13 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             return res.status(400).send('Unsupported format—please upload .xlsx or .ods');
         }
 
-        const workbook = xlsx.readFile(tempFilePath, { cellDates: true });
+        let workbook;
+        try {
+            workbook = xlsx.readFile(tempFilePath, { cellDates: true });
+        } catch (error) {
+            return res.status(400).send(`Error reading file: ${error.message}`);
+        }
+
         const sheetName = workbook.SheetNames[0];
         const sheet = workbook.Sheets[sheetName];
         const jsonData = xlsx.utils.sheet_to_json(sheet);
@@ -35,7 +117,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             return res.status(400).send('Uploaded file contains no data.');
         }
 
-        // Get database columns
         const [colFromDB] = await sequelize.query('DESC ISSUE_MASTER')
             .catch(err => {
                 throw new Error(`Database error: ${err.message}`);
@@ -44,12 +125,10 @@ router.post('/submit', upload.single('file'), async (req, res) => {
         const colFromDBNames = colFromDB.map(col => col.Field);
         const spreadsheetCols = Object.keys(jsonData[0]);
         
-        // FIX: Define invalidCols variable to find columns in spreadsheet not in DB
         const invalidCols = spreadsheetCols.filter(col => !colFromDBNames.includes(col));
         const missingRequiredCols = ['issue_title', 'description', 'appl_type', 'audit_methodology_type']
             .filter(required => !spreadsheetCols.includes(required));
         
-        // Handle invalid or missing columns
         if (invalidCols.length > 0 || missingRequiredCols.length > 0) {
             let message = '';
             if (invalidCols.length > 0) {
@@ -60,13 +139,12 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 message += `Missing required columns: ${missingRequiredCols.join(', ')}. `;
             }
             
-            const newFilePath = path.join(__dirname, '../uploads', 'template_issue_master.ods');
+            const templateFilename = 'template_issue_master.ods';
+            const newFilePath = path.join(UPLOADS_DIR, templateFilename);
 
             const newWorkbook = xlsx.utils.book_new();
-            // Create a sample row with all required fields
             const sampleRow = {};
             colFromDBNames.forEach(col => {
-                // Set default sample values based on column type
                 switch(col) {
                     case 'issue_master_id':
                         sampleRow[col] = 'Auto-generated';
@@ -100,7 +178,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 }
             });
             
-            // Create template with column names and sample row
             const templateData = [sampleRow];
             const newSheet = xlsx.utils.json_to_sheet(templateData);
             
@@ -109,32 +186,23 @@ router.post('/submit', upload.single('file'), async (req, res) => {
 
             return res.status(400).send(
                 `${message} Please download the template file with valid columns. 
-                <a href="/file/download/${path.basename(newFilePath)}">Download Template</a>`
+                <a href="/file/download/${encodeURIComponent(templateFilename)}">Download Template</a>`
             );
-        }
-        
-        // FIX: Implement actual data import to database
+        }        
         const validRows = [];
         const invalidRows = [];
-        
-        // Validate each row and prepare for import
         jsonData.forEach((row, index) => {
-            // Track row number for error reporting
             const rowNum = index + 2; 
             const errors = [];
-            
-            // Check required fields
             if (!row.issue_title) errors.push('Missing issue_title');
             if (!row.description) errors.push('Missing description');
             if (row.issue_title && row.issue_title.length > 300) 
-                errors.push('issue_title exceeds 300 character limit');
-                
-            // Set default values for fields that need them
+                errors.push('issue_title exceeds 300 character limit');                
             const processedRow = {
                 ...row,
                 appl_type: row.appl_type || -1,
                 audit_methodology_type: row.audit_methodology_type || 200,
-                created_by_id: req.body.userId || 1, // Assuming user ID is passed in the request
+                created_by_id: req.body.userId || 1,
                 created_on: new Date(),
                 is_updated: '0',
                 updated_by_user: 'no'
@@ -149,9 +217,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     errors
                 });
             }
-        });
-        
-        // If there are invalid rows, generate report and stop
+        });        
         if (invalidRows.length > 0) {
             const errorReport = invalidRows.map(row => 
                 `Row ${row.rowNum}: ${row.errors.join(', ')}`
@@ -161,15 +227,34 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 Found ${invalidRows.length} rows with errors. Please fix them and try again.
                 <pre>${errorReport}</pre>
             `);
-        }
-        
-        // If all rows are valid, insert into database
+        }        
         if (validRows.length > 0) {
-            const insertCount = await batchInsert(validRows);
-            return res.status(200).send(`
-                File processed successfully. 
-                Imported ${insertCount} records into the database.
-            `);
+            const lenientPatterns = vulnerabilities.map(vul => {
+                const escaped = vul.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                return escaped.replace(/\s+/g, '\\s*');
+            });
+            const lenientRegex = new RegExp(lenientPatterns.join('|'), 'i');
+            let rowsToInsert = validRows.filter(row => lenientRegex.test(row.issue_title));
+            console.log('Rows to insert:', rowsToInsert.length);
+            
+            if (rowsToInsert.length === 0) {
+                return res.status(400).send('No valid data found to import.');
+            }
+            
+            try {
+                const { downloadName, filePath } = downloadFile(origName, rowsToInsert);
+                await batchInsert(rowsToInsert);
+                console.log('Rows inserted successfully:', rowsToInsert.length);
+                res.render('preview', {
+                    rows: rowsToInsert,
+                    totalRows: validRows,
+                    filename: req.file.originalname,
+                    downloadName
+                });
+            } catch (err) {
+                console.error('Error preparing file:', err);
+                return res.status(500).send(`Error preparing file: ${err.message}`);
+            }
         } else {
             return res.status(400).send('No valid data found to import.');
         }
@@ -186,74 +271,123 @@ router.post('/submit', upload.single('file'), async (req, res) => {
     }
 });
 
-// Helper function to insert data in batches for better performance
 async function batchInsert(rows) {
-    const BATCH_SIZE = 100;
-    let insertedCount = 0;
-    
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = rows.slice(i, i + BATCH_SIZE);
-        try {
-            await sequelize.query(
-                `INSERT INTO issue_master (
-                    issue_master_key, issue_title, description, impact, 
-                    recommendation, owasp_ref_no, cwe_cve_ref_no, 
-                    appl_type, audit_methodology_type, created_by_id, 
-                    created_on, is_updated, updated_by_user
-                ) VALUES ${batch.map(row => '(?)').join(', ')}`,
-                {
-                    replacements: batch.map(row => [
-                        row.issue_master_key || null,
-                        row.issue_title,
-                        row.description,
-                        row.impact || null,
-                        row.recommendation || null,
-                        row.owasp_ref_no || null,
-                        row.cwe_cve_ref_no || null,
-                        row.appl_type,
-                        row.audit_methodology_type,
-                        row.created_by_id,
-                        row.created_on,
-                        row.is_updated,
-                        row.updated_by_user
-                    ]),
-                    type: sequelize.QueryTypes.INSERT
-                }
-            );
-            insertedCount += batch.length;
-        } catch (error) {
-            console.error('Error during batch insert:', error);
-            throw new Error(`Failed to insert batch starting at row ${i+1}: ${error.message}`);
+    const transaction = await sequelize.transaction();
+    try {
+        const BATCH_SIZE = 100;
+        let insertedCount = 0;
+        
+        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+            const batch = rows.slice(i, i + BATCH_SIZE);
+            try {
+                await sequelize.query(
+                    `INSERT INTO issue_master (
+                        issue_master_key, issue_title, description, impact, 
+                        recommendation, owasp_ref_no, cwe_cve_ref_no, 
+                        appl_type, audit_methodology_type, created_by_id, 
+                        created_on, is_updated, updated_by_user
+                    ) VALUES ${batch.map(() => '(?)').join(', ')}`,
+                    {
+                        replacements: batch.map(row => [
+                            row.issue_master_key || null,
+                            row.issue_title,
+                            row.description,
+                            row.impact || null,
+                            row.recommendation || null,
+                            row.owasp_ref_no || null,
+                            row.cwe_cve_ref_no || null,
+                            row.appl_type,
+                            row.audit_methodology_type,
+                            row.created_by_id,
+                            row.created_on,
+                            row.is_updated,
+                            row.updated_by_user
+                        ]),
+                        type: sequelize.QueryTypes.INSERT
+                    }
+                );
+                insertedCount += batch.length;
+            } catch (error) {
+                console.error('Error during batch insert:', error);
+                throw new Error(`Failed to insert batch starting at row ${i+1}: ${error.message}`);
+            }
         }
+        
+        await transaction.commit();
+        return insertedCount;
+    } catch (error) {
+        await transaction.rollback();
+        throw error;
     }
-    
-    return insertedCount;
 }
 
-const UPLOADS_DIR = path.join(__dirname, '../uploads');
-
 router.get('/download/:filename', (req, res) => {
-    console.log('Uploads dir contains:', fs.readdirSync(UPLOADS_DIR));
-    let filename = req.params.filename;
-    if (path.extname(filename).toLowerCase() !== '.ods') {
-        filename += '.ods';
-    }
-    const filePath = path.join(UPLOADS_DIR, filename);
+    const filename = req.params.filename;
+    const sanitizedFilename = path.basename(filename);
+    const filePath = path.join(UPLOADS_DIR, sanitizedFilename);
+    
     console.log('Looking for file:', filePath);
-    if (fs.existsSync(filePath)) {
-        return res.download(filePath, err => {
-            if (err) {
-                console.error('Error during download:', err);
-                if (!res.headersSent) {
-                    res.status(500).send('Error downloading file');
-                }
-            } else {
-                console.log('Download started:', filename);
-            }
-        });
+
+    if (!fs.existsSync(filePath)) {
+        console.warn('File not found:', filePath);
+        return res.status(404).send('File not found');
     }
-    console.warn('File not found:', filePath);
-    res.status(404).send('File not found');
+
+    const fileStream = fs.createReadStream(filePath);
+
+    // Handle stream errors
+    fileStream.on('error', (err) => {
+        console.error('Stream error:', err);
+        if (!res.headersSent) {
+            res.status(500).send('Error streaming file');
+        }
+    });
+
+    req.on('close', () => {
+        fileStream.destroy();
+        console.log('Download aborted by client');
+    });
+
+    res.download(filePath, sanitizedFilename, (err) => {
+        if (err) {
+            console.error('Error during download:', err);
+            if (!res.headersSent) {
+                res.status(500).send('Error downloading file');
+            }
+        } else {
+            console.log('Download completed:', sanitizedFilename);
+        }
+    });
+});
+
+router.get('/preview', (req, res) => {
+    try {
+        let { filename, rows, totalRows } = req.body || req.query;
+
+        if (!filename || !rows) {
+            return res.status(400).send('Missing filename or rows in request.');
+        }        
+        if (typeof rows === 'string') {
+            rows = JSON.parse(rows);
+        }
+        
+        if (totalRows && typeof totalRows === 'string') {
+            totalRows = JSON.parse(totalRows);
+        } else {
+            totalRows = [];
+        }
+        const { downloadName } = downloadFile(filename, rows);
+        
+        res.render('preview', {
+            rows,
+            totalRows,
+            filename,
+            downloadName
+        });
+    } catch (err) {
+        console.error('Error in /preview:', err);
+        res.status(500).send(`Preview generation failed: ${err.message}`);
+    }
 });
 
 module.exports = router;
