@@ -1,10 +1,40 @@
+<div class="modal-div hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>
+        Information
+      </h3>
+      <img src="close-button.svg" width="20" height="20" class="close-btn">
+    </div>
+    <div class="modal-content">
+      <p>
+        These are the 30 issues that we take into account in this format. Here is a file in <a href="/file/download/template_issue_master.ods">downloadable format.</a>
+      </p>
+      <button class="dropdown">
+        List of Issues
+      </button>
+      <div class="dropdown-content">
+        <% vulnerabilities.forEach(vulnerability=>{ %>
+          <span>
+            <%= vulnerability %>
+          </span><br>
+        <% }) %>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="upload-container">
+  <button
+    class="info-btn"
+  >
+    i
+  </button>
   <h1>Submit your report here</h1>
   <form action="/file/submit" method="POST" enctype="multipart/form-data">
     <label for="report-file" class="file-label">Select a file</label>
     <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
     <div class="file-name" id="file-name">No file chosen</div>
-    <button type="submit">Submit</button>
+    <button class="button" type="submit">Submit</button>
   </form>
 </div>
 <script>
@@ -28,4 +58,12 @@
     fileNameDiv.style.background = fileInput.files.length ? 'linear-gradient(to top, #f9f9f9, #e3e3e3)' : 'none';
 
   });
+  let toggle = false;
+  document.querySelector('.close-btn').addEventListener('click',()=>{
+    document.querySelector('.modal-div').classList.add('hidden');
+  })
+  
+  document.querySelector('.info-btn').addEventListener('click',()=>{
+    document.querySelector('.modal-div').classList.remove('hidden');
+  })
 </script>

@@ -11,9 +11,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.set('view engine', 'ejs');
 app.use(expressLayouts);
+app.use(express.static('public'));
 app.use('/', indexRoute);
 app.use('/file', fileRoute);
-
 app.listen(process.env.PORT || 3000,async()=>{
     console.log(`Server is running on port ${process.env.PORT || 3000}`);
     await databaseExists(process.env.DB_NAME).then(async (exists) => {
