@@ -114,7 +114,6 @@ This document provides an overview of all available routes in the application an
 
 - **Request Fields**:  
   - `file`: File upload (Spreadsheet)  
-  - `userId`: (Optional) ID of the user submitting the data
 
 - **Response**:  
   - On success: Renders `preview.ejs` with rows inserted  
