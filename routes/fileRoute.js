@@ -46,6 +46,67 @@ const vulnerabilities = [
     "Cloud Misconfigurations"
 ];  
 
+// Helper function to add vulnerabilities sheet to a workbook
+function addVulnerabilitiesSheet(workbook) {
+    const vulnSheet = xlsx.utils.json_to_sheet(
+        vulnerabilities.map((vulnerability, index) => ({
+            'S.No': index + 1,
+            'Vulnerability': vulnerability
+        }))
+    );
+    
+    const wscols = [
+        { wch: 6 },
+        { wch: 50 }, 
+    ];
+    vulnSheet['!cols'] = wscols;
+    
+    xlsx.utils.book_append_sheet(workbook, vulnSheet, 'Vulnerabilities');
+    return workbook;
+}
+
+// Helper function to create data validation for issue_title column (column C)
+function addDataValidation(sheet, rowCount) {
+    if (!sheet['!validations']) {
+        sheet['!validations'] = [];
+    }
+
+    // Add dropdown validation
+    sheet['!validations'].push({
+        sqref: `C2:C${rowCount + 1}`,
+        formulas: [`Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`],
+        type: 'list',
+        allowBlank: false,
+        errorStyle: 'stop',
+        showErrorMessage: true,
+        errorTitle: 'Invalid Vulnerability',
+        error: 'Please select a vulnerability from the dropdown list. Only predefined vulnerabilities are allowed.',
+        showDropdown: true,
+        promptTitle: 'Select Vulnerability',
+        prompt: 'Choose a vulnerability from the predefined list'
+    });
+
+    // Set column protection to prevent free text entry
+    if (!sheet['!protect']) {
+        sheet['!protect'] = {
+            password: '',
+            formatCells: true,
+            formatColumns: true,
+            formatRows: true,
+            insertColumns: true,
+            insertRows: true,
+            insertHyperlinks: true,
+            deleteColumns: true,
+            deleteRows: true,
+            sort: true,
+            autoFilter: true,
+            pivotTables: true
+        };
+    }
+
+    return sheet;
+}
+
 // Helper function to safely download a file
 function downloadFile(filename, rows) {
     try {
@@ -68,7 +129,34 @@ function downloadFile(filename, rows) {
         
         const newWorkbook = xlsx.utils.book_new();
         const newSheet = xlsx.utils.json_to_sheet(rows, { header: colHeaders });
+
+        // Add data validation on issue_title column
+        addDataValidation(newSheet, rows.length);
+        
+        const wscols = [
+            { wch: 15 }, // issue_master_id
+            { wch: 15 }, // issue_master_key
+            { wch: 40 }, // issue_title
+            { wch: 50 }, // description
+            { wch: 30 }, // impact
+            { wch: 30 }, // recommendation
+            { wch: 15 }, // owasp_ref_no
+            { wch: 15 }, // cwe_cve_ref_no
+            { wch: 10 }, // appl_type
+            { wch: 20 }, // audit_methodology_type
+            { wch: 15 }, // created_by_id
+            { wch: 20 }, // created_on
+            { wch: 10 }, // is_updated
+            { wch: 15 }, // updated_by_user
+            { wch: 20 }  // deleted_on
+        ];
+        newSheet['!cols'] = wscols;
+        
         xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Valid Rows');
+        
+        // Also add the vulnerabilities list for reference
+        addVulnerabilitiesSheet(newWorkbook);
+        
         xlsx.writeFile(newWorkbook, newName);
         
         return {
@@ -79,6 +167,13 @@ function downloadFile(filename, rows) {
         console.error('Error creating download file:', err);
         throw new Error(`Failed to create download file: ${err.message}`);
     }
+}
+
+// Helper function to check if a vulnerability is valid
+function isValidVulnerability(title) {
+    return vulnerabilities.some(vulnerability => 
+        title.trim().toLowerCase() === vulnerability.toLowerCase()
+    );
 }
 
 router.post('/submit', upload.single('file'), async (req, res) => {
@@ -150,7 +245,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                         sampleRow[col] = 'Auto-generated';
                         break;
                     case 'issue_title':
-                        sampleRow[col] = 'Example Security Issue Title';
+                        sampleRow[col] = 'Cross-Site Scripting (XSS)';  
                         break;
                     case 'description':
                         sampleRow[col] = 'Detailed description of the security issue';
@@ -181,7 +276,30 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             const templateData = [sampleRow];
             const newSheet = xlsx.utils.json_to_sheet(templateData);
             
+            const wscols = [
+                { wch: 15 }, // issue_master_id
+                { wch: 40 }, // issue_title
+                { wch: 50 }, // description
+                { wch: 30 }, // impact
+                { wch: 30 }, // recommendation
+                { wch: 15 }, // owasp_ref_no
+                { wch: 15 }, // cwe_cve_ref_no
+                { wch: 10 }, // appl_type
+                { wch: 20 }, // audit_methodology_type
+                { wch: 15 }, // created_by_id
+                { wch: 20 }, // created_on
+                { wch: 10 }, // is_updated
+                { wch: 15 }, // updated_by_user
+                { wch: 20 }  // deleted_on
+            ];
+            newSheet['!cols'] = wscols;
+            
+            addDataValidation(newSheet, templateData.length);
+            
             xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Template');
+            
+            addVulnerabilitiesSheet(newWorkbook);
+            
             xlsx.writeFile(newWorkbook, newFilePath);
 
             return res.status(400).send(
@@ -197,7 +315,12 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             if (!row.issue_title) errors.push('Missing issue_title');
             if (!row.description) errors.push('Missing description');
             if (row.issue_title && row.issue_title.length > 300) 
-                errors.push('issue_title exceeds 300 character limit');                
+                errors.push('issue_title exceeds 300 character limit');
+            
+            if (row.issue_title && !isValidVulnerability(row.issue_title)) {
+                errors.push('issue_title must exactly match one of the predefined vulnerabilities');
+            }
+                
             const processedRow = {
                 ...row,
                 appl_type: row.appl_type || -1,
