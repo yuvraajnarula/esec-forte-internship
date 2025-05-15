@@ -4,6 +4,21 @@ const multer = require('multer');
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 const router = express.Router();
+const winston = require('winston');
+
+const logger = winston.createLogger({
+  level: 'info', 
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' }),
+  ],
+});
 
 const UPLOADS_DIR = path.join(__dirname, '../uploads/');
 
@@ -11,40 +26,17 @@ const upload = multer({
     dest: UPLOADS_DIR,
     limits: { fileSize: 20 * 1024 * 1024 },
 });
-const { sequelize } = require('../db.js');
+const { sequelize, getVulnerabilities } = require('../db.js');
 
-const vulnerabilities = [
-    "SQL Injection (SQLi)",
-    "Cross-Site Scripting (XSS)",
-    "Cross-Site Request Forgery (CSRF)",
-    "Broken Authentication and Session Management",
-    "Insecure Direct Object References (IDOR)",
-    "Security Misconfiguration",
-    "Sensitive Data Exposure",
-    "Using Components with Known Vulnerabilities",
-    "Insecure Deserialization",
-    "Insufficient Logging & Monitoring",
-    "Server-Side Request Forgery (SSRF)",
-    "XML External Entity (XXE) Injection",
-    "Unvalidated Redirects & Forwards",
-    "Privilege Escalation",
-    "Business Logic Flaws",
-    "API Vulnerabilities",
-    "Inadequate Input Validation",
-    "Weak Password Policies",
-    "Unencrypted Sensitive Data at Rest",
-    "Improper Error Handling",
-    "Directory Traversal",
-    "Clickjacking",
-    "Memory Corruption (Buffer Overflows)",
-    "Race Conditions",
-    "Certificate & TLS Misconfigurations",
-    "Open Redirects",
-    "Hard-Coded Credentials",
-    "Insufficient Session Expiration",
-    "Client-Side Security Bypass",
-    "Cloud Misconfigurations"
-];  
+let vulnerabilities = [];
+(async () => {
+  try {
+    vulnerabilities = await getVulnerabilities();
+    logger.log('info', `Loaded vulnerabilities: ${vulnerabilities}`);
+  } catch (error) {
+    logger.error(`Failed to load vulnerabilities: ${error.message}`);
+  }
+})();
 
 function addVulnerabilitiesSheet(workbook) {
     const vulnSheet = workbook.addWorksheet('Vulnerabilities');
@@ -54,8 +46,6 @@ function addVulnerabilitiesSheet(workbook) {
         { header: 'S.No', key: 'sno', width: 6 },
         { header: 'Vulnerability', key: 'vulnerability', width: 50 }
     ];
-    
-    // Add data
     const vulnData = vulnerabilities.map((vulnerability, index) => ({
         sno: index + 1,
         vulnerability: vulnerability
@@ -139,9 +129,16 @@ function downloadFile(filename, rows) {
                 error: 'Please select a valid vulnerability.'
             }
         }        
+        logger.info({
+            level: 'info',
+            message : "Data Validation added"
+        })
         // Add vulnerabilities sheet
         addVulnerabilitiesSheet(workbook);
-        
+        ogger.info({
+            level: 'info',
+            message : "Vulnerabilities sheet added"
+        })
         // Save the file
         return workbook.xlsx.writeFile(newName)
             .then(() => {
@@ -151,7 +148,7 @@ function downloadFile(filename, rows) {
                 };
             });
     } catch (err) {
-        console.error('Error creating download file:', err);
+        logger.log('error', `${err}`)
         throw new Error(`Failed to create download file: ${err.message}`);
     }
 }
@@ -317,10 +314,10 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                         sampleRowData[col] = '';
                 }
             });
-            
+            logger.log('info', `${vulnerabilities}`)
             templateSheet.addRow(sampleRowData);
             const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
-
+            logger.log('info', `${formulaRef}`)
             // Add data validation
             for(let i = 2; i<100000; i++){
                 templateSheet.getCell(`C${i}`).dataValidation = {
@@ -400,7 +397,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             });
             const lenientRegex = new RegExp(lenientPatterns.join('|'), 'i');
             let rowsToInsert = validRows.filter(row => lenientRegex.test(row.issue_title));
-            console.log('Rows to insert:', rowsToInsert.length);
+            logger.log('info',`Rows to insert: ${rowsToInsert.length}`);
             
             if (rowsToInsert.length === 0) {
                 return res.status(400).send('No valid data found to import.');
@@ -409,7 +406,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             try {
                 const result = await downloadFile(origName, rowsToInsert);
                 await batchInsert(rowsToInsert);
-                console.log('Rows inserted successfully:', rowsToInsert.length);
+                logger.log('info',`Rows inserted: ${rowsToInsert.length}`);
                 res.render('preview', {
                     rows: rowsToInsert,
                     totalRows: validRows,
@@ -417,7 +414,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     downloadName: result.downloadName
                 });
             } catch (err) {
-                console.error('Error preparing file:', err);
+                logger.log('error', `${err}`)
                 return res.status(500).send(`Error preparing file: ${err.message}`);
             }
         } else {
@@ -425,7 +422,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
         }
 
     } catch (err) {
-        console.error('Error processing file:', err);
+        logger.log('error', `${err}`)
         return res.status(500).send(`Error processing file: ${err.message}`);
     } finally {
         if (tempFilePath) {
@@ -473,7 +470,7 @@ async function batchInsert(rows) {
                 );
                 insertedCount += batch.length;
             } catch (error) {
-                console.error('Error during batch insert:', error);
+                logger.log('error', `${err}`)
                 throw new Error(`Failed to insert batch starting at row ${i+1}: ${error.message}`);
             }
         }
@@ -491,10 +488,10 @@ router.get('/download/:filename', (req, res) => {
     const sanitizedFilename = path.basename(filename);
     const filePath = path.join(UPLOADS_DIR, sanitizedFilename);
     
-    console.log('Looking for file:', filePath);
+    logger.log('info',`Looking for file: ${filePath}`);
 
     if (!fs.existsSync(filePath)) {
-        console.warn('File not found:', filePath);
+        logger.log('warn',`File not found: ${filePath}`);
         return res.status(404).send('File not found');
     }
 
@@ -502,7 +499,7 @@ router.get('/download/:filename', (req, res) => {
 
     // Handle stream errors
     fileStream.on('error', (err) => {
-        console.error('Stream error:', err);
+        logger.log('error', `${err}`)
         if (!res.headersSent) {
             res.status(500).send('Error streaming file');
         }
@@ -510,17 +507,17 @@ router.get('/download/:filename', (req, res) => {
 
     req.on('close', () => {
         fileStream.destroy();
-        console.log('Download aborted by client');
+        logger.log('info','Download aborted by client');
     });
 
     res.download(filePath, sanitizedFilename, (err) => {
         if (err) {
-            console.error('Error during download:', err);
+            logger.log('error', `${err}`)
             if (!res.headersSent) {
                 res.status(500).send('Error downloading file');
             }
         } else {
-            console.log('Download completed:', sanitizedFilename);
+            logger.log('info',`Download completed: ${sanitizedFilename}`);
         }
     });
 });
@@ -552,7 +549,7 @@ router.get('/preview', async (req, res) => {
             downloadName: result.downloadName
         });
     } catch (err) {
-        console.error('Error in /preview:', err);
+        logger.log('error', `${err}`)
         res.status(500).send(`Preview generation failed: ${err.message}`);
     }
 });

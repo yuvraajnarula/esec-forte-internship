@@ -1,38 +1,33 @@
 const express = require('express');
+const { getVulnerabilities } = require('../db');
 const router = express.Router();
-const vulnerabilities = [
-    "SQL Injection (SQLi)",
-    "Cross-Site Scripting (XSS)",
-    "Cross-Site Request Forgery (CSRF)",
-    "Broken Authentication and Session Management",
-    "Insecure Direct Object References (IDOR)",
-    "Security Misconfiguration",
-    "Sensitive Data Exposure",
-    "Using Components with Known Vulnerabilities",
-    "Insecure Deserialization",
-    "Insufficient Logging & Monitoring",
-    "Server-Side Request Forgery (SSRF)",
-    "XML External Entity (XXE) Injection",
-    "Unvalidated Redirects & Forwards",
-    "Privilege Escalation",
-    "Business Logic Flaws",
-    "API Vulnerabilities",
-    "Inadequate Input Validation",
-    "Weak Password Policies",
-    "Unencrypted Sensitive Data at Rest",
-    "Improper Error Handling",
-    "Directory Traversal",
-    "Clickjacking",
-    "Memory Corruption (Buffer Overflows)",
-    "Race Conditions",
-    "Certificate & TLS Misconfigurations",
-    "Open Redirects",
-    "Hard-Coded Credentials",
-    "Insufficient Session Expiration",
-    "Client-Side Security Bypass",
-    "Cloud Misconfigurations"
-];  
+const winston = require('winston');
 
+const logger = winston.createLogger({
+  level: 'info', 
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.printf(({ timestamp, level, message }) => {
+      return `${timestamp} [${level.toUpperCase()}]: ${message}`;
+    })
+  ),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'app.log' }),
+  ],
+});
+let vulnerabilities = [];
+(async () => {
+  try {
+    vulnerabilities = await getVulnerabilities();
+    logger.log('info', `Loaded vulnerabilities: ${vulnerabilities}`);
+  } catch (error) {
+    logger.error(`Failed to load vulnerabilities: ${error.message}`);
+  }
+})();
+
+
+logger.log('info', `${vulnerabilities}`);
 router.get('/', (req, res) => {
     res.render('index',{
         vulnerabilities : vulnerabilities
