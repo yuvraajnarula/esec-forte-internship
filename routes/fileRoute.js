@@ -5,6 +5,7 @@ const ExcelJS = require('exceljs');
 const fs = require('fs');
 const router = express.Router();
 const winston = require('winston');
+const { exec } = require('child_process');
 
 const logger = winston.createLogger({
   level: 'info', 
@@ -27,6 +28,7 @@ const upload = multer({
     limits: { fileSize: 20 * 1024 * 1024 },
 });
 const { sequelize, getVulnerabilities } = require('../db.js');
+const { log } = require('console');
 
 let vulnerabilities = [];
 (async () => {
@@ -34,7 +36,7 @@ let vulnerabilities = [];
     vulnerabilities = await getVulnerabilities();
     logger.log('info', `Loaded vulnerabilities: ${vulnerabilities}`);
   } catch (error) {
-    logger.error(`Failed to load vulnerabilities: ${error.message}`);
+    logger.error(`39 - Failed to load vulnerabilities: ${error.message}`);
   }
 })();
 
@@ -56,6 +58,7 @@ function addVulnerabilitiesSheet(workbook) {
     // Format header row
     const headerRow = vulnSheet.getRow(1);
     headerRow.font = { bold: true };
+
     headerRow.fill = {
         type: 'pattern',
         pattern: 'solid',
@@ -66,15 +69,15 @@ function addVulnerabilitiesSheet(workbook) {
 }
 
 // Helper function to safely download a file
-function downloadFile(filename, rows) {
+async function downloadFile(filename, rows) {
     try {
         const name = path.basename(filename);
         const safeFilename = name.replace(/[^a-zA-Z0-9_.-]/g, '_');
         const now = new Date();
         const timestamp = `${now.getMinutes()}_${now.getSeconds()}`;
-        const filenameWithTimestamp = `${safeFilename.replace(/\.(xlsx|ods)$/, '')}_${timestamp}.xlsx`;
+        const filenameBase = `${safeFilename.replace(/\.(xlsx|ods)$/, '')}_${timestamp}`;
         
-        const newName = path.join(UPLOADS_DIR, filenameWithTimestamp);
+        const xlsxName = path.join(UPLOADS_DIR, `${filenameBase}.xlsx`);
         
         const colHeaders = [
             'issue_master_id',
@@ -135,34 +138,71 @@ function downloadFile(filename, rows) {
         })
         // Add vulnerabilities sheet
         addVulnerabilitiesSheet(workbook);
-        ogger.info({
+        logger.info({
             level: 'info',
             message : "Vulnerabilities sheet added"
         })
-        // Save the file
-        return workbook.xlsx.writeFile(newName)
-            .then(() => {
-                return {
-                    downloadName: path.basename(newName),
-                    filePath: newName
-                };
-            });
+
+        // Save the XLSX file
+        await workbook.xlsx.writeFile(xlsxName);
+        
+        // Convert to ODS
+        let odsPath = null;
+        try {
+            odsPath = await convertToOds(xlsxName);
+            logger.log('info', `ods - ${odsPath}`);
+        } catch (err) {
+            logger.warn(`ODS conversion failed: ${err}`);     
+       }
+
+        return {
+            downloadName: path.basename(xlsxName),
+            downloadNameOds: odsPath ? path.basename(odsPath) : null,
+            filePath: xlsxName,
+            filePathOds: odsPath
+        };
     } catch (err) {
-        logger.log('error', `${err}`)
-        throw new Error(`Failed to create download file: ${err.message}`);
+        logger.error(`164 - Failed to create download files: ${err}`);
+        throw new Error(`Failed to create download files: ${err}`);
     }
 }
-
-// Helper function to check if a vulnerability is valid
 function isValidVulnerability(title) {
-    return vulnerabilities.some(vulnerability => 
-        title.trim().toLowerCase() === vulnerability.toLowerCase()
-    );
+    return vulnerabilities.some(vuln => vuln.includes(title));
+}
+
+// Add this after the existing helper functions
+async function convertToOds(xlsxPath) {
+    try {
+        // Get directory and filename
+        const dir = path.dirname(xlsxPath);
+        const filename = path.basename(xlsxPath, '.xlsx');
+        
+        return new Promise((resolve, reject) => {
+            // Run soffice command to convert
+            exec(`soffice --headless --convert-to ods "${xlsxPath}" --outdir "${dir}"`, (error, stdout, stderr) => {
+                if (error) {
+                    logger.error(`483 - Conversion error: ${error.message}`);
+                    reject(error);
+                    return;
+                }
+                
+                const odsPath = path.join(dir, `${filename}.ods`);
+                if (fs.existsSync(odsPath)) {
+                    logger.info(`Successfully converted to ODS: ${odsPath}`);
+                    resolve(odsPath);
+                } else {
+                    reject(new Error('ODS file not created'));
+                }
+            });
+        });
+    } catch (err) {
+        logger.error(`198 - Failed to convert to ODS: ${err.message}`);
+        throw err;
+    }
 }
 
 router.post('/submit', upload.single('file'), async (req, res) => {
     let tempFilePath = null;
-    
     try {
         if (!req.file) {
             return res.status(400).send('No file uploaded.');
@@ -215,14 +255,17 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             return res.status(400).send(`Error reading file: ${error.message}`);
         }
 
-        if (jsonData.length === 0) {
+        if (jsonData.length ===  0) {
             return res.status(400).send('Uploaded file contains no data.');
         }
 
-        const [colFromDB] = await sequelize.query('DESC ISSUE_MASTER')
-            .catch(err => {
+        let colFromDB;
+            try {
+                [colFromDB] = await sequelize.query('DESC ISSUE_MASTER');
+            } catch (err) {
                 throw new Error(`Database error: ${err.message}`);
-            });
+            }
+
             
         const colFromDBNames = colFromDB.map(col => col.Field);
         const spreadsheetCols = Object.keys(jsonData[0]);
@@ -343,17 +386,16 @@ router.post('/submit', upload.single('file'), async (req, res) => {
         }
         
         const validRows = [];
-        const invalidRows = [];
         
         jsonData.forEach((row, index) => {
-            const rowNum = index + 2; // +2 because of 0-indexed array and header row
+            const rowNum = index + 2;
             const errors = [];
             
             if (!row.issue_title) errors.push('Missing issue_title');
             if (!row.description) errors.push('Missing description');
             if (row.issue_title && row.issue_title.length > 300) 
                 errors.push('issue_title exceeds 300 character limit');
-            
+            logger.log('info', `${row.issue_title} ${isValidVulnerability(row.issue_title)}`)
             if (row.issue_title && !isValidVulnerability(row.issue_title)) {
                 errors.push('issue_title must exactly match one of the predefined vulnerabilities');
             }
@@ -370,25 +412,10 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             
             if (errors.length === 0) {
                 validRows.push(processedRow);
-            } else {
-                invalidRows.push({
-                    rowNum,
-                    data: row,
-                    errors
-                });
             }
         });
         
-        if (invalidRows.length > 0) {
-            const errorReport = invalidRows.map(row => 
-                `Row ${row.rowNum}: ${row.errors.join(', ')}`
-            ).join('\n');
-            
-            return res.status(400).send(`
-                Found ${invalidRows.length} rows with errors. Please fix them and try again.
-                <pre>${errorReport}</pre>
-            `);
-        }
+       
         
         if (validRows.length > 0) {
             const lenientPatterns = vulnerabilities.map(vul => {
@@ -411,18 +438,18 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     rows: rowsToInsert,
                     totalRows: validRows,
                     filename: req.file.originalname,
-                    downloadName: result.downloadName
+                    downloadName: result.downloadNameOds,
                 });
-            } catch (err) {
-                logger.log('error', `${err}`)
-                return res.status(500).send(`Error preparing file: ${err.message}`);
+            } catch (error) {
+                logger.log('error', `443 - ${error}`)
+                return res.status(500).send(`Error preparing file: ${error}`);
             }
         } else {
             return res.status(400).send('No valid data found to import.');
         }
 
     } catch (err) {
-        logger.log('error', `${err}`)
+        logger.log('error', `451 ${err}`)
         return res.status(500).send(`Error processing file: ${err.message}`);
     } finally {
         if (tempFilePath) {
@@ -434,54 +461,72 @@ router.post('/submit', upload.single('file'), async (req, res) => {
 });
 
 async function batchInsert(rows) {
-    const transaction = await sequelize.transaction();
-    try {
-        const BATCH_SIZE = 100;
-        let insertedCount = 0;
-        
-        for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-            const batch = rows.slice(i, i + BATCH_SIZE);
-            try {
-                await sequelize.query(
-                    `INSERT INTO issue_master (
-                        issue_master_key, issue_title, description, impact, 
-                        recommendation, owasp_ref_no, cwe_cve_ref_no, 
-                        appl_type, audit_methodology_type, created_by_id, 
-                        created_on, is_updated, updated_by_user
-                    ) VALUES ${batch.map(() => '(?)').join(', ')}`,
-                    {
-                        replacements: batch.map(row => [
-                            row.issue_master_key || null,
-                            row.issue_title,
-                            row.description,
-                            row.impact || null,
-                            row.recommendation || null,
-                            row.owasp_ref_no || null,
-                            row.cwe_cve_ref_no || null,
-                            row.appl_type,
-                            row.audit_methodology_type,
-                            row.created_by_id,
-                            row.created_on,
-                            row.is_updated,
-                            row.updated_by_user
-                        ]),
-                        type: sequelize.QueryTypes.INSERT
-                    }
-                );
-                insertedCount += batch.length;
-            } catch (error) {
-                logger.log('error', `${err}`)
-                throw new Error(`Failed to insert batch starting at row ${i+1}: ${error.message}`);
-            }
+  const transaction = await sequelize.transaction();
+  try {
+    const BATCH_SIZE = 100;
+    const COL_COUNT = 13; // number of columns in your INSERT
+    const placeholdersPerRow = `(${Array(COL_COUNT).fill('?').join(',')})`;
+
+    let insertedCount = 0;
+
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+
+      // “(?,?…?)” × batch.length, joined with commas
+      const valuesClause = batch.map(() => placeholdersPerRow).join(',');
+
+      // flatten each row’s 13 values in order
+      const flatReplacements = batch.flatMap(row => [
+        row.issue_master_key    || null,
+        row.issue_title,
+        row.description,
+        row.impact              || null,
+        row.recommendation      || null,
+        row.owasp_ref_no        || null,
+        row.cwe_cve_ref_no      || null,
+        row.appl_type,
+        row.audit_methodology_type,
+        row.created_by_id,
+        row.created_on,
+        row.is_updated,
+        row.updated_by_user
+      ]);
+
+      await sequelize.query(
+        `INSERT INTO issue_master (
+           issue_master_key,
+           issue_title,
+           description,
+           impact,
+           recommendation,
+           owasp_ref_no,
+           cwe_cve_ref_no,
+           appl_type,
+           audit_methodology_type,
+           created_by_id,
+           created_on,
+           is_updated,
+           updated_by_user
+         ) VALUES ${valuesClause}`,
+        {
+          replacements: flatReplacements,
+          type: sequelize.QueryTypes.INSERT
         }
-        
-        await transaction.commit();
-        return insertedCount;
-    } catch (error) {
-        await transaction.rollback();
-        throw error;
+      );
+
+      insertedCount += batch.length;
     }
+
+    await transaction.commit();
+    return insertedCount;
+
+  } catch (error) {
+    await transaction.rollback();
+    logger.error(`Batch insert failed: ${error}`); 
+    throw error;
+  }
 }
+
 
 router.get('/download/:filename', (req, res) => {
     const filename = req.params.filename;
@@ -499,7 +544,7 @@ router.get('/download/:filename', (req, res) => {
 
     // Handle stream errors
     fileStream.on('error', (err) => {
-        logger.log('error', `${err}`)
+        logger.log('error', `528 - ${err}`)
         if (!res.headersSent) {
             res.status(500).send('Error streaming file');
         }
@@ -512,7 +557,7 @@ router.get('/download/:filename', (req, res) => {
 
     res.download(filePath, sanitizedFilename, (err) => {
         if (err) {
-            logger.log('error', `${err}`)
+            logger.log('error', `541 - ${err}`)
             if (!res.headersSent) {
                 res.status(500).send('Error downloading file');
             }
@@ -523,35 +568,33 @@ router.get('/download/:filename', (req, res) => {
 });
 
 router.get('/preview', async (req, res) => {
-    try {
-        let { filename, rows, totalRows } = req.body || req.query;
+  try {
+    let { filename, rows, totalRows, downloadNameOds } = req.body || req.query;
 
-        if (!filename || !rows) {
-            return res.status(400).send('Missing filename or rows in request.');
-        }
-        
-        if (typeof rows === 'string') {
-            rows = JSON.parse(rows);
-        }
-        
-        if (totalRows && typeof totalRows === 'string') {
-            totalRows = JSON.parse(totalRows);
-        } else {
-            totalRows = [];
-        }
-        
-        const result = await downloadFile(filename, rows);
-        
-        res.render('preview', {
-            rows,
-            totalRows,
-            filename,
-            downloadName: result.downloadName
-        });
-    } catch (err) {
-        logger.log('error', `${err}`)
-        res.status(500).send(`Preview generation failed: ${err.message}`);
+    if (!filename || !rows) {
+      return res.status(400).send('Missing filename or rows in request.');
     }
+
+    // parse JSON strings into objects
+    if (typeof rows === 'string') {
+      rows = JSON.parse(rows);
+    }
+    if (totalRows && typeof totalRows === 'string') {
+      totalRows = JSON.parse(totalRows);
+    } else {
+      totalRows = [];
+    }
+    res.render('preview', {
+      rows,
+      totalRows,
+      filename,
+      downloadName: downloadNameOds,  
+    });
+  } catch (err) {
+    logger.error(`578 - ${err}`);
+    res.status(500).send(`Preview generation failed: ${err.message}`);
+  }
 });
+
 
 module.exports = router;

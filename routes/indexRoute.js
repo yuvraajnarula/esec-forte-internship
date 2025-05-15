@@ -16,21 +16,19 @@ const logger = winston.createLogger({
     new winston.transports.File({ filename: 'app.log' }),
   ],
 });
-let vulnerabilities = [];
+const vulnerabilities = [];
 (async () => {
   try {
-    vulnerabilities = await getVulnerabilities();
+    const newVulnerabilities = await getVulnerabilities();
+    vulnerabilities.push(...newVulnerabilities);
     logger.log('info', `Loaded vulnerabilities: ${vulnerabilities}`);
   } catch (error) {
     logger.error(`Failed to load vulnerabilities: ${error.message}`);
   }
 })();
-
-
-logger.log('info', `${vulnerabilities}`);
 router.get('/', (req, res) => {
     res.render('index',{
-        vulnerabilities : vulnerabilities
+        vulnerabilities,
     });
 });
 module.exports = router;

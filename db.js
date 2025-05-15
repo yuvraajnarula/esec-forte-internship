@@ -115,7 +115,6 @@ async function initializeDatabase(dbName) {
       logger.info(`Database '${dbName}' created.`);
     }
 
-    await sequelize.close();
     await sequelize.authenticate();
     sequelize.config.database = dbName;
     await sequelize.query(`USE \`${dbName}\``);
@@ -186,7 +185,7 @@ async function getVulnerabilities() {
     );
     let arr =  vulnerabilities.map(v => v.issue_title)
     logger.log('info', `${arr}`)
-    return;
+    return arr;
   } catch (error) {
     logger.error(`Error fetching vulnerabilities: ${error.message || error}`);
     return [];
