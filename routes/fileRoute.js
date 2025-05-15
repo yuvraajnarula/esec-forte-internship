@@ -1,7 +1,7 @@
 const express = require('express');
 const path = require('path');
 const multer = require('multer');
-const xlsx = require('xlsx');
+const ExcelJS = require('exceljs');
 const fs = require('fs');
 const router = express.Router();
 
@@ -46,65 +46,33 @@ const vulnerabilities = [
     "Cloud Misconfigurations"
 ];  
 
-// Helper function to add vulnerabilities sheet to a workbook
 function addVulnerabilitiesSheet(workbook) {
-    const vulnSheet = xlsx.utils.json_to_sheet(
-        vulnerabilities.map((vulnerability, index) => ({
-            'S.No': index + 1,
-            'Vulnerability': vulnerability
-        }))
-    );
+    const vulnSheet = workbook.addWorksheet('Vulnerabilities');
     
-    const wscols = [
-        { wch: 6 },
-        { wch: 50 }, 
+    // Add headers
+    vulnSheet.columns = [
+        { header: 'S.No', key: 'sno', width: 6 },
+        { header: 'Vulnerability', key: 'vulnerability', width: 50 }
     ];
-    vulnSheet['!cols'] = wscols;
     
-    xlsx.utils.book_append_sheet(workbook, vulnSheet, 'Vulnerabilities');
+    // Add data
+    const vulnData = vulnerabilities.map((vulnerability, index) => ({
+        sno: index + 1,
+        vulnerability: vulnerability
+    }));
+    
+    vulnSheet.addRows(vulnData);
+    
+    // Format header row
+    const headerRow = vulnSheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD3D3D3' }
+    };
+    
     return workbook;
-}
-
-// Helper function to create data validation for issue_title column (column C)
-function addDataValidation(sheet, rowCount) {
-    if (!sheet['!validations']) {
-        sheet['!validations'] = [];
-    }
-
-    // Add dropdown validation
-    sheet['!validations'].push({
-        sqref: `C2:C${rowCount + 1}`,
-        formulas: [`Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`],
-        type: 'list',
-        allowBlank: false,
-        errorStyle: 'stop',
-        showErrorMessage: true,
-        errorTitle: 'Invalid Vulnerability',
-        error: 'Please select a vulnerability from the dropdown list. Only predefined vulnerabilities are allowed.',
-        showDropdown: true,
-        promptTitle: 'Select Vulnerability',
-        prompt: 'Choose a vulnerability from the predefined list'
-    });
-
-    // Set column protection to prevent free text entry
-    if (!sheet['!protect']) {
-        sheet['!protect'] = {
-            password: '',
-            formatCells: true,
-            formatColumns: true,
-            formatRows: true,
-            insertColumns: true,
-            insertRows: true,
-            insertHyperlinks: true,
-            deleteColumns: true,
-            deleteRows: true,
-            sort: true,
-            autoFilter: true,
-            pivotTables: true
-        };
-    }
-
-    return sheet;
 }
 
 // Helper function to safely download a file
@@ -114,7 +82,7 @@ function downloadFile(filename, rows) {
         const safeFilename = name.replace(/[^a-zA-Z0-9_.-]/g, '_');
         const now = new Date();
         const timestamp = `${now.getMinutes()}_${now.getSeconds()}`;
-        const filenameWithTimestamp = `${safeFilename.replace(/\.xlsx$/, '')}_${timestamp}.ods`;
+        const filenameWithTimestamp = `${safeFilename.replace(/\.(xlsx|ods)$/, '')}_${timestamp}.xlsx`;
         
         const newName = path.join(UPLOADS_DIR, filenameWithTimestamp);
         
@@ -127,42 +95,61 @@ function downloadFile(filename, rows) {
             'deleted_on'
         ];
         
-        const newWorkbook = xlsx.utils.book_new();
-        const newSheet = xlsx.utils.json_to_sheet(rows, { header: colHeaders });
-
-        // Add data validation on issue_title column
-        addDataValidation(newSheet, rows.length);
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Valid Rows');
         
-        const wscols = [
-            { wch: 15 }, // issue_master_id
-            { wch: 15 }, // issue_master_key
-            { wch: 40 }, // issue_title
-            { wch: 50 }, // description
-            { wch: 30 }, // impact
-            { wch: 30 }, // recommendation
-            { wch: 15 }, // owasp_ref_no
-            { wch: 15 }, // cwe_cve_ref_no
-            { wch: 10 }, // appl_type
-            { wch: 20 }, // audit_methodology_type
-            { wch: 15 }, // created_by_id
-            { wch: 20 }, // created_on
-            { wch: 10 }, // is_updated
-            { wch: 15 }, // updated_by_user
-            { wch: 20 }  // deleted_on
+        // Define columns
+        worksheet.columns = [
+            { header: 'issue_master_id', key: 'issue_master_id', width: 15 },
+            { header: 'issue_master_key', key: 'issue_master_key', width: 15 },
+            { header: 'issue_title', key: 'issue_title', width: 40 },
+            { header: 'description', key: 'description', width: 50 },
+            { header: 'impact', key: 'impact', width: 30 },
+            { header: 'recommendation', key: 'recommendation', width: 30 },
+            { header: 'owasp_ref_no', key: 'owasp_ref_no', width: 15 },
+            { header: 'cwe_cve_ref_no', key: 'cwe_cve_ref_no', width: 15 },
+            { header: 'appl_type', key: 'appl_type', width: 10 },
+            { header: 'audit_methodology_type', key: 'audit_methodology_type', width: 20 },
+            { header: 'created_by_id', key: 'created_by_id', width: 15 },
+            { header: 'created_on', key: 'created_on', width: 20 },
+            { header: 'is_updated', key: 'is_updated', width: 10 },
+            { header: 'updated_by_user', key: 'updated_by_user', width: 15 },
+            { header: 'deleted_on', key: 'deleted_on', width: 20 }
         ];
-        newSheet['!cols'] = wscols;
         
-        xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Valid Rows');
-        
-        // Also add the vulnerabilities list for reference
-        addVulnerabilitiesSheet(newWorkbook);
-        
-        xlsx.writeFile(newWorkbook, newName);
-        
-        return {
-            downloadName: path.basename(newName),
-            filePath: newName
+        // Format header row
+        const headerRow = worksheet.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFD3D3D3' }
         };
+        const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
+
+        // Add data validation
+        worksheet.addRows(rows);
+        for(let i = 2; i<100000; i++){
+            worksheet.getCell(`C${i}`).dataValidation = {
+                type: 'list',
+                allowBlank: true,
+                formulae: [formulaRef],
+                showErrorMessage: true,
+                errorTitle: 'Invalid Option',
+                error: 'Please select a valid vulnerability.'
+            }
+        }        
+        // Add vulnerabilities sheet
+        addVulnerabilitiesSheet(workbook);
+        
+        // Save the file
+        return workbook.xlsx.writeFile(newName)
+            .then(() => {
+                return {
+                    downloadName: path.basename(newName),
+                    filePath: newName
+                };
+            });
     } catch (err) {
         console.error('Error creating download file:', err);
         throw new Error(`Failed to create download file: ${err.message}`);
@@ -197,16 +184,39 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             return res.status(400).send('Unsupported format—please upload .xlsx or .ods');
         }
 
-        let workbook;
+        let workbook = new ExcelJS.Workbook();
+        let jsonData = [];
+        
         try {
-            workbook = xlsx.readFile(tempFilePath, { cellDates: true });
+            await workbook.xlsx.readFile(tempFilePath);
+            const sheet = workbook.getWorksheet(1);
+            
+            if (!sheet) {
+                return res.status(400).send('Uploaded file contains no worksheets.');
+            }
+            
+            // Get headers from the first row
+            const headers = [];
+            sheet.getRow(1).eachCell((cell) => {
+                headers.push(cell.value);
+            });
+            
+            // Convert worksheet data to JSON
+            jsonData = [];
+            sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+                if (rowNumber > 1) { // Skip header row
+                    const rowData = {};
+                    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                        if (colNumber <= headers.length) {
+                            rowData[headers[colNumber - 1]] = cell.value;
+                        }
+                    });
+                    jsonData.push(rowData);
+                }
+            });
         } catch (error) {
             return res.status(400).send(`Error reading file: ${error.message}`);
         }
-
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        const jsonData = xlsx.utils.sheet_to_json(sheet);
 
         if (jsonData.length === 0) {
             return res.status(400).send('Uploaded file contains no data.');
@@ -234,84 +244,114 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 message += `Missing required columns: ${missingRequiredCols.join(', ')}. `;
             }
             
-            const templateFilename = 'template_issue_master.ods';
+            const templateFilename = 'template_issue_master.xlsx';
             const newFilePath = path.join(UPLOADS_DIR, templateFilename);
 
-            const newWorkbook = xlsx.utils.book_new();
-            const sampleRow = {};
+            const templateWorkbook = new ExcelJS.Workbook();
+            const templateSheet = templateWorkbook.addWorksheet('Template');
+            
+            // Define columns based on DB schema
+            templateSheet.columns = colFromDBNames.map(col => {
+                let width;
+                switch(col) {
+                    case 'issue_master_id': width = 15; break;
+                    case 'issue_title': width = 40; break;
+                    case 'description': width = 50; break;
+                    case 'impact': width = 30; break;
+                    case 'recommendation': width = 30; break;
+                    case 'owasp_ref_no': width = 15; break;
+                    case 'cwe_cve_ref_no': width = 15; break;
+                    case 'appl_type': width = 10; break;
+                    case 'audit_methodology_type': width = 20; break;
+                    case 'created_by_id': width = 15; break;
+                    case 'created_on': width = 20; break;
+                    case 'is_updated': width = 10; break;
+                    case 'updated_by_user': width = 15; break;
+                    case 'deleted_on': width = 20; break;
+                    default: width = 15;
+                }
+                return { header: col, key: col, width };
+            });
+            
+            // Format header row
+            const headerRow = templateSheet.getRow(1);
+            headerRow.font = { bold: true };
+            headerRow.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFD3D3D3' }
+            };
+            
+            // Add sample row
+            const sampleRowData = {};
             colFromDBNames.forEach(col => {
                 switch(col) {
                     case 'issue_master_id':
-                        sampleRow[col] = 'Auto-generated';
+                        sampleRowData[col] = 'Auto-generated';
                         break;
                     case 'issue_title':
-                        sampleRow[col] = 'Cross-Site Scripting (XSS)';  
+                        sampleRowData[col] = 'Cross-Site Scripting (XSS)';  
                         break;
                     case 'description':
-                        sampleRow[col] = 'Detailed description of the security issue';
+                        sampleRowData[col] = 'Detailed description of the security issue';
                         break;
                     case 'impact':
-                        sampleRow[col] = 'Potential impact of the vulnerability';
+                        sampleRowData[col] = 'Potential impact of the vulnerability';
                         break;
                     case 'recommendation':
-                        sampleRow[col] = 'Recommendations to fix the issue';
+                        sampleRowData[col] = 'Recommendations to fix the issue';
                         break;
                     case 'appl_type':
-                        sampleRow[col] = '1';
+                        sampleRowData[col] = 1;
                         break;
                     case 'audit_methodology_type':
-                        sampleRow[col] = '200';
+                        sampleRowData[col] = 200;
                         break;
                     case 'created_by_id':
-                        sampleRow[col] = '1';
+                        sampleRowData[col] = 1;
                         break;
                     case 'created_on':
-                        sampleRow[col] = new Date().toISOString();
+                        sampleRowData[col] = new Date();
                         break;
                     default:
-                        sampleRow[col] = '';
+                        sampleRowData[col] = '';
                 }
             });
             
-            const templateData = [sampleRow];
-            const newSheet = xlsx.utils.json_to_sheet(templateData);
+            templateSheet.addRow(sampleRowData);
+            const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
+
+            // Add data validation
+            for(let i = 2; i<100000; i++){
+                templateSheet.getCell(`C${i}`).dataValidation = {
+                    type: 'list',
+                    allowBlank: true,
+                    formulae: [formulaRef],
+                    showErrorMessage: true,
+                    errorTitle: 'Invalid Option',
+                    error: 'Please select a valid vulnerability.'
+                }
+            }  
             
-            const wscols = [
-                { wch: 15 }, // issue_master_id
-                { wch: 40 }, // issue_title
-                { wch: 50 }, // description
-                { wch: 30 }, // impact
-                { wch: 30 }, // recommendation
-                { wch: 15 }, // owasp_ref_no
-                { wch: 15 }, // cwe_cve_ref_no
-                { wch: 10 }, // appl_type
-                { wch: 20 }, // audit_methodology_type
-                { wch: 15 }, // created_by_id
-                { wch: 20 }, // created_on
-                { wch: 10 }, // is_updated
-                { wch: 15 }, // updated_by_user
-                { wch: 20 }  // deleted_on
-            ];
-            newSheet['!cols'] = wscols;
+            // Add vulnerabilities sheet
+            addVulnerabilitiesSheet(templateWorkbook);
             
-            addDataValidation(newSheet, templateData.length);
-            
-            xlsx.utils.book_append_sheet(newWorkbook, newSheet, 'Template');
-            
-            addVulnerabilitiesSheet(newWorkbook);
-            
-            xlsx.writeFile(newWorkbook, newFilePath);
+            // Save the template file
+            await templateWorkbook.xlsx.writeFile(newFilePath);
 
             return res.status(400).send(
                 `${message} Please download the template file with valid columns. 
                 <a href="/file/download/${encodeURIComponent(templateFilename)}">Download Template</a>`
             );
-        }        
+        }
+        
         const validRows = [];
         const invalidRows = [];
+        
         jsonData.forEach((row, index) => {
-            const rowNum = index + 2; 
+            const rowNum = index + 2; // +2 because of 0-indexed array and header row
             const errors = [];
+            
             if (!row.issue_title) errors.push('Missing issue_title');
             if (!row.description) errors.push('Missing description');
             if (row.issue_title && row.issue_title.length > 300) 
@@ -340,7 +380,8 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     errors
                 });
             }
-        });        
+        });
+        
         if (invalidRows.length > 0) {
             const errorReport = invalidRows.map(row => 
                 `Row ${row.rowNum}: ${row.errors.join(', ')}`
@@ -350,7 +391,8 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 Found ${invalidRows.length} rows with errors. Please fix them and try again.
                 <pre>${errorReport}</pre>
             `);
-        }        
+        }
+        
         if (validRows.length > 0) {
             const lenientPatterns = vulnerabilities.map(vul => {
                 const escaped = vul.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -365,14 +407,14 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             }
             
             try {
-                const { downloadName, filePath } = downloadFile(origName, rowsToInsert);
+                const result = await downloadFile(origName, rowsToInsert);
                 await batchInsert(rowsToInsert);
                 console.log('Rows inserted successfully:', rowsToInsert.length);
                 res.render('preview', {
                     rows: rowsToInsert,
                     totalRows: validRows,
                     filename: req.file.originalname,
-                    downloadName
+                    downloadName: result.downloadName
                 });
             } catch (err) {
                 console.error('Error preparing file:', err);
@@ -483,13 +525,14 @@ router.get('/download/:filename', (req, res) => {
     });
 });
 
-router.get('/preview', (req, res) => {
+router.get('/preview', async (req, res) => {
     try {
         let { filename, rows, totalRows } = req.body || req.query;
 
         if (!filename || !rows) {
             return res.status(400).send('Missing filename or rows in request.');
-        }        
+        }
+        
         if (typeof rows === 'string') {
             rows = JSON.parse(rows);
         }
@@ -499,13 +542,14 @@ router.get('/preview', (req, res) => {
         } else {
             totalRows = [];
         }
-        const { downloadName } = downloadFile(filename, rows);
+        
+        const result = await downloadFile(filename, rows);
         
         res.render('preview', {
             rows,
             totalRows,
             filename,
-            downloadName
+            downloadName: result.downloadName
         });
     } catch (err) {
         console.error('Error in /preview:', err);
