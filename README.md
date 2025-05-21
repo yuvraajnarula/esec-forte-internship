@@ -72,6 +72,25 @@ It allows **users (like security analysts, auditors, or developers)** to bulk up
 | updated_by_user     | ENUM('yes', 'no')                  | DEFAULT 'no'                              | Updated by user flag   |
 | deleted_on          | DATETIME                           | DEFAULT NULL                              | Deleted timestamp      |
 
+### `vulnerabilities` table schema
+| Column Name          | Data Type    | Constraints / Default Value            | Description                      |
+| -------------------- | ------------ | -------------------------------------- | -------------------------------- |
+| vul\_id              | INT          | PRIMARY KEY, AUTO\_INCREMENT, NOT NULL | Unique vulnerability ID          |
+| app\_id              | INT          | NOT NULL                               | Associated application ID        |
+| vul\_title           | VARCHAR(100) | NOT NULL                               | Title of the vulnerability       |
+| affected\_url        | TEXT         | DEFAULT NULL                           | URL affected by the issue        |
+| risk\_rating         | VARCHAR(50)  | DEFAULT NULL                           | Risk rating                      |
+| affected\_parameters | TEXT         | DEFAULT NULL                           | Affected parameters              |
+| description          | TEXT         | DEFAULT NULL                           | Description of the vulnerability |
+| impact               | TEXT         | DEFAULT NULL                           | Impact of the vulnerability      |
+| recommendation       | TEXT         | DEFAULT NULL                           | Recommendation to fix            |
+| reference            | TEXT         | DEFAULT NULL                           | Reference links or details       |
+| status               | VARCHAR(50)  | DEFAULT NULL                           | Status of the vulnerability      |
+| created\_on          | DATETIME     | NOT NULL                               | Creation timestamp               |
+| updated\_on          | DATETIME     | DEFAULT NULL                           | Last updated timestamp           |
+| deleted\_on          | DATETIME     | DEFAULT NULL                           | Deletion timestamp               |
+
+
 ---
 
 # 📋 API Routes Documentation
