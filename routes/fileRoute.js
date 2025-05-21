@@ -371,9 +371,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     errorTitle: 'Invalid Option',
                     error: 'Please select a valid vulnerability.'
                 }
-            }  
-            
-            // Add vulnerabilities sheet
+            }              
             addVulnerabilitiesSheet(templateWorkbook);
             
             // Save the template file
@@ -464,18 +462,14 @@ async function batchInsert(rows) {
   const transaction = await sequelize.transaction();
   try {
     const BATCH_SIZE = 100;
-    const COL_COUNT = 13; // number of columns in your INSERT
+    const COL_COUNT = 13;
     const placeholdersPerRow = `(${Array(COL_COUNT).fill('?').join(',')})`;
 
     let insertedCount = 0;
 
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const batch = rows.slice(i, i + BATCH_SIZE);
-
-      // “(?,?…?)” × batch.length, joined with commas
       const valuesClause = batch.map(() => placeholdersPerRow).join(',');
-
-      // flatten each row’s 13 values in order
       const flatReplacements = batch.flatMap(row => [
         row.issue_master_key    || null,
         row.issue_title,

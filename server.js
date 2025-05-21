@@ -7,7 +7,7 @@ const { initializeDatabase } = require('./db.js');
 const indexRoute = require('./routes/indexRoute.js');
 const fileRoute = require('./routes/fileRoute.js');
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const app = express();
 
 const logger = winston.createLogger({
@@ -30,16 +30,20 @@ app.set('view engine', 'ejs');
 app.use(expressLayouts);
 app.use(express.static('public'));
 
+app.use('/', indexRoute);
+app.use('/file', fileRoute);
+
 (async () => {
   try {
     await initializeDatabase(process.env.DB_NAME);
     logger.info('Database initialized successfully.');
-
-    app.use('/', indexRoute);
-    app.use('/file', fileRoute);
-
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, '127.0.0.1', () => {
       logger.info(`Server is running on port ${PORT}`);
+      logger.info(`address() = ${JSON.stringify(server.address())}`);
+    });
+
+    server.on('error', (err) => {
+      logger.error(`Listen error: ${err.message}`);
     });
   } catch (error) {
     logger.error(`Error during server startup: ${error.message || error}`);
