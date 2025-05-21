@@ -79,35 +79,33 @@ async function downloadFile(filename, rows) {
         
         const xlsxName = path.join(UPLOADS_DIR, `${filenameBase}.xlsx`);
         
+        // Updated columns for vulnerabilities table structure
         const colHeaders = [
-            'issue_master_id',
-            'issue_master_key', 'issue_title', 'description', 'impact',
-            'recommendation', 'owasp_ref_no', 'cwe_cve_ref_no',
-            'appl_type', 'audit_methodology_type', 'created_by_id',
-            'created_on', 'is_updated', 'updated_by_user',
-            'deleted_on'
+            'vul_id', 'app_id', 'vul_title', 'affected_url', 'risk_rating',
+            'affected_parameters', 'description', 'impact',
+            'recommendation', 'reference', 'status',
+            'created_on', 'updated_on', 'deleted_on'
         ];
         
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Valid Rows');
         
-        // Define columns
+        // Define columns for vulnerabilities structure
         worksheet.columns = [
-            { header: 'issue_master_id', key: 'issue_master_id', width: 15 },
-            { header: 'issue_master_key', key: 'issue_master_key', width: 15 },
-            { header: 'issue_title', key: 'issue_title', width: 40 },
+            { header: 'vul_id', key: 'vul_id', width: 10 },
+            { header: 'app_id', key: 'app_id', width: 10 },
+            { header: 'vul_title', key: 'vul_title', width: 40 },
+            { header: 'affected_url', key: 'affected_url', width: 50 },
+            { header: 'risk_rating', key: 'risk_rating', width: 15 },
+            { header: 'affected_parameters', key: 'affected_parameters', width: 30 },
             { header: 'description', key: 'description', width: 50 },
             { header: 'impact', key: 'impact', width: 30 },
             { header: 'recommendation', key: 'recommendation', width: 30 },
-            { header: 'owasp_ref_no', key: 'owasp_ref_no', width: 15 },
-            { header: 'cwe_cve_ref_no', key: 'cwe_cve_ref_no', width: 15 },
-            { header: 'appl_type', key: 'appl_type', width: 10 },
-            { header: 'audit_methodology_type', key: 'audit_methodology_type', width: 20 },
-            { header: 'created_by_id', key: 'created_by_id', width: 15 },
-            { header: 'created_on', key: 'created_on', width: 20 },
-            { header: 'is_updated', key: 'is_updated', width: 10 },
-            { header: 'updated_by_user', key: 'updated_by_user', width: 15 },
-            { header: 'deleted_on', key: 'deleted_on', width: 20 }
+            { header: 'reference', key: 'reference', width: 30 },
+            { header: 'status', key: 'status', width: 15 },
+            { header: 'created_on', key: 'created_on', width: 15 },
+            { header: 'updated_on', key: 'updated_on', width: 15 },
+            { header: 'deleted_on', key: 'deleted_on', width: 15 }
         ];
         
         // Format header row
@@ -166,6 +164,7 @@ async function downloadFile(filename, rows) {
         throw new Error(`Failed to create download files: ${err}`);
     }
 }
+
 function isValidVulnerability(title) {
     return vulnerabilities.some(vuln => vuln.includes(title));
 }
@@ -261,7 +260,8 @@ router.post('/submit', upload.single('file'), async (req, res) => {
 
         let colFromDB;
             try {
-                [colFromDB] = await sequelize.query('DESC ISSUE_MASTER');
+                // Change the table name from ISSUE_MASTER to vulnerabilities
+                [colFromDB] = await sequelize.query('DESC vulnerabilities');
             } catch (err) {
                 throw new Error(`Database error: ${err.message}`);
             }
@@ -271,7 +271,8 @@ router.post('/submit', upload.single('file'), async (req, res) => {
         const spreadsheetCols = Object.keys(jsonData[0]);
         
         const invalidCols = spreadsheetCols.filter(col => !colFromDBNames.includes(col));
-        const missingRequiredCols = ['issue_title', 'description', 'appl_type', 'audit_methodology_type']
+        // Updated required columns for vulnerabilities
+        const missingRequiredCols = ['app_id', 'vul_title', 'description']
             .filter(required => !spreadsheetCols.includes(required));
         
         if (invalidCols.length > 0 || missingRequiredCols.length > 0) {
@@ -284,30 +285,30 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 message += `Missing required columns: ${missingRequiredCols.join(', ')}. `;
             }
             
-            const templateFilename = 'template_issue_master.xlsx';
+            const templateFilename = 'template_vulnerabilities.xlsx';
             const newFilePath = path.join(UPLOADS_DIR, templateFilename);
 
             const templateWorkbook = new ExcelJS.Workbook();
             const templateSheet = templateWorkbook.addWorksheet('Template');
             
-            // Define columns based on DB schema
+            // Define columns based on DB schema for vulnerabilities
             templateSheet.columns = colFromDBNames.map(col => {
                 let width;
                 switch(col) {
-                    case 'issue_master_id': width = 15; break;
-                    case 'issue_title': width = 40; break;
+                    case 'vul_id': width = 10; break;
+                    case 'app_id': width = 10; break;
+                    case 'vul_title': width = 40; break;
+                    case 'affected_url': width = 50; break;
+                    case 'risk_rating': width = 15; break;
+                    case 'affected_parameters': width = 30; break;
                     case 'description': width = 50; break;
                     case 'impact': width = 30; break;
                     case 'recommendation': width = 30; break;
-                    case 'owasp_ref_no': width = 15; break;
-                    case 'cwe_cve_ref_no': width = 15; break;
-                    case 'appl_type': width = 10; break;
-                    case 'audit_methodology_type': width = 20; break;
-                    case 'created_by_id': width = 15; break;
-                    case 'created_on': width = 20; break;
-                    case 'is_updated': width = 10; break;
-                    case 'updated_by_user': width = 15; break;
-                    case 'deleted_on': width = 20; break;
+                    case 'reference': width = 30; break;
+                    case 'status': width = 15; break;
+                    case 'created_on': width = 15; break;
+                    case 'updated_on': width = 15; break;
+                    case 'deleted_on': width = 15; break;
                     default: width = 15;
                 }
                 return { header: col, key: col, width };
@@ -322,15 +323,27 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 fgColor: { argb: 'FFD3D3D3' }
             };
             
-            // Add sample row
+            // Add sample row with vulnerabilities structure data
             const sampleRowData = {};
             colFromDBNames.forEach(col => {
                 switch(col) {
-                    case 'issue_master_id':
+                    case 'vul_id':
                         sampleRowData[col] = 'Auto-generated';
                         break;
-                    case 'issue_title':
+                    case 'app_id':
+                        sampleRowData[col] = 1;
+                        break;
+                    case 'vul_title':
                         sampleRowData[col] = 'Cross-Site Scripting (XSS)';  
+                        break;
+                    case 'affected_url':
+                        sampleRowData[col] = 'https://example.com/vulnerable-page';
+                        break;
+                    case 'risk_rating':
+                        sampleRowData[col] = 'High';
+                        break;
+                    case 'affected_parameters':
+                        sampleRowData[col] = 'search, id';
                         break;
                     case 'description':
                         sampleRowData[col] = 'Detailed description of the security issue';
@@ -341,14 +354,11 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     case 'recommendation':
                         sampleRowData[col] = 'Recommendations to fix the issue';
                         break;
-                    case 'appl_type':
-                        sampleRowData[col] = 1;
+                    case 'reference':
+                        sampleRowData[col] = 'OWASP Top 10 - A3:2021';
                         break;
-                    case 'audit_methodology_type':
-                        sampleRowData[col] = 200;
-                        break;
-                    case 'created_by_id':
-                        sampleRowData[col] = 1;
+                    case 'status':
+                        sampleRowData[col] = 'Open';
                         break;
                     case 'created_on':
                         sampleRowData[col] = new Date();
@@ -389,23 +399,22 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             const rowNum = index + 2;
             const errors = [];
             
-            if (!row.issue_title) errors.push('Missing issue_title');
+            // Validation for vulnerabilities structure
+            if (!row.app_id) errors.push('Missing app_id');
+            if (!row.vul_title) errors.push('Missing vul_title');
             if (!row.description) errors.push('Missing description');
-            if (row.issue_title && row.issue_title.length > 300) 
-                errors.push('issue_title exceeds 300 character limit');
-            logger.log('info', `${row.issue_title} ${isValidVulnerability(row.issue_title)}`)
-            if (row.issue_title && !isValidVulnerability(row.issue_title)) {
-                errors.push('issue_title must exactly match one of the predefined vulnerabilities');
+            if (row.vul_title && row.vul_title.length > 100) 
+                errors.push('vul_title exceeds 100 character limit');
+            logger.log('info', `${row.vul_title} ${isValidVulnerability(row.vul_title)}`)
+            if (row.vul_title && !isValidVulnerability(row.vul_title)) {
+                errors.push('vul_title must exactly match one of the predefined vulnerabilities');
             }
                 
             const processedRow = {
                 ...row,
-                appl_type: row.appl_type || -1,
-                audit_methodology_type: row.audit_methodology_type || 200,
-                created_by_id: req.body.userId || 1,
+                app_id: row.app_id || 1,
                 created_on: new Date(),
-                is_updated: '0',
-                updated_by_user: 'no'
+                status: row.status || 'Open'
             };
             
             if (errors.length === 0) {
@@ -421,7 +430,7 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 return escaped.replace(/\s+/g, '\\s*');
             });
             const lenientRegex = new RegExp(lenientPatterns.join('|'), 'i');
-            let rowsToInsert = validRows.filter(row => lenientRegex.test(row.issue_title));
+            let rowsToInsert = validRows.filter(row => lenientRegex.test(row.vul_title));
             logger.log('info',`Rows to insert: ${rowsToInsert.length}`);
             
             if (rowsToInsert.length === 0) {
@@ -458,11 +467,12 @@ router.post('/submit', upload.single('file'), async (req, res) => {
     }
 });
 
+// Updated batchInsert function for vulnerabilities table
 async function batchInsert(rows) {
   const transaction = await sequelize.transaction();
   try {
     const BATCH_SIZE = 100;
-    const COL_COUNT = 13;
+    const COL_COUNT = 11;   
     const placeholdersPerRow = `(${Array(COL_COUNT).fill('?').join(',')})`;
 
     let insertedCount = 0;
@@ -471,36 +481,32 @@ async function batchInsert(rows) {
       const batch = rows.slice(i, i + BATCH_SIZE);
       const valuesClause = batch.map(() => placeholdersPerRow).join(',');
       const flatReplacements = batch.flatMap(row => [
-        row.issue_master_key    || null,
-        row.issue_title,
+        row.app_id,
+        row.vul_title,
+        row.affected_url         || null,
+        row.risk_rating          || null,
+        row.affected_parameters  || null,
         row.description,
-        row.impact              || null,
-        row.recommendation      || null,
-        row.owasp_ref_no        || null,
-        row.cwe_cve_ref_no      || null,
-        row.appl_type,
-        row.audit_methodology_type,
-        row.created_by_id,
-        row.created_on,
-        row.is_updated,
-        row.updated_by_user
+        row.impact               || null,
+        row.recommendation       || null,
+        row.reference            || null,
+        row.status               || 'Open',
+        row.created_on
       ]);
 
       await sequelize.query(
-        `INSERT INTO issue_master (
-           issue_master_key,
-           issue_title,
+        `INSERT INTO vulnerabilities (
+           app_id,
+           vul_title,
+           affected_url,
+           risk_rating,
+           affected_parameters,
            description,
            impact,
            recommendation,
-           owasp_ref_no,
-           cwe_cve_ref_no,
-           appl_type,
-           audit_methodology_type,
-           created_by_id,
-           created_on,
-           is_updated,
-           updated_by_user
+           reference,
+           status,
+           created_on
          ) VALUES ${valuesClause}`,
         {
           replacements: flatReplacements,
