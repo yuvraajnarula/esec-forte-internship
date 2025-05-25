@@ -64,6 +64,30 @@ const IssueMaster = sequelize.define('issue_master', {
   timestamps: false,
 });
 
+const ImageProof = sequelize.define('image_proof', {
+  image_proof_id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    allowNull: false,
+    primaryKey: true
+  },
+  vul_id: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  image_url: {
+    type: DataTypes.STRING(255),
+    allowNull: false,
+  },
+  created_on: {
+    type: DataTypes.DATE,
+    allowNull: false,
+  },
+}, {
+  tableName: 'image_proofs',
+  timestamps: false,
+});
+
 const Vulnerability = sequelize.define('vulnerability', {
   vul_id: {
     type: DataTypes.INTEGER,
@@ -194,6 +218,26 @@ async function initializeDatabase(dbName) {
       logger.info('Vulnerabilities table already exists');
     }
     
+    // Check if ImageProof table exists
+    const [imageProofTableExists] = await sequelize.query(
+      `SELECT COUNT(*) as count
+       FROM information_schema.tables
+       WHERE table_schema = :dbName
+       AND table_name = 'image_proofs'`,
+      {
+        replacements: { dbName },
+        type: Sequelize.QueryTypes.SELECT,
+      }
+    );
+    
+    if (!imageProofTableExists || imageProofTableExists.count === 0) {
+      logger.info('Image Proof table does not exist, creating it...');
+      await ImageProof.sync({ force: false });
+      logger.info('Image Proof table created');
+    } else {
+      logger.info('Image Proof table already exists');
+    }
+    
     // Check if data needs to be seeded
     try {
       const existingVuln = await IssueMaster.count();
@@ -261,6 +305,22 @@ async function initializeDatabase(dbName) {
         logger.info('Vulnerabilities table created manually');
       } catch (err) {
         logger.error(`Failed to manually create vulnerabilities table: ${err.message || err}`);
+      }
+      
+      try {
+        logger.info('Attempting manual table creation for image_proofs...');
+        await sequelize.query(`
+          CREATE TABLE IF NOT EXISTS image_proofs (
+            image_proof_id INT NOT NULL AUTO_INCREMENT,
+            vul_id INT NOT NULL,
+            image_url VARCHAR(255) NOT NULL,
+            created_on DATETIME NOT NULL,
+            PRIMARY KEY (image_proof_id)
+          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3;
+        `);
+        logger.info('Image Proof table created manually');
+      } catch (err) {
+        logger.error(`Failed to manually create image_proofs table: ${err.message || err}`);
       }
     }
     
@@ -414,5 +474,6 @@ module.exports = {
   initializeDatabase,
   getVulnerabilities,
   IssueMaster,
-  Vulnerability
+  Vulnerability,
+  ImageProof
 };

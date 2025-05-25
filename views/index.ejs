@@ -31,39 +31,54 @@
   </button>
   <h1>Submit your report here</h1>
   <form action="/file/submit" method="POST" enctype="multipart/form-data">
-    <label for="report-file" class="file-label">Select a file</label>
+    <label for="report-file" class="file-label">Upload audit report</label>
     <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
     <div class="file-name" id="file-name">No file chosen</div>
+    <label for="reference-zip" class="file-label">Upload image reference zip</label>
+    <input type="file" id="reference-zip" name="referenceZip" accept=".zip,.rar" required />
+    <div class="file-name" id="zip-file-name">No file chosen</div>
     <button class="button" type="submit">Submit</button>
   </form>
 </div>
 <script>
-  // Show the selected file name under the label
+  // Report file logic
   const fileInput = document.getElementById('report-file');
   const fileNameDiv = document.getElementById('file-name');
 
   fileInput.addEventListener('change', () => {
-    const name = fileInput.files.length ?
-      fileInput.files[0].name :
-      'No file chosen';
-    fileNameDiv.textContent = name;
-    fileNameDiv.style.visibility = fileInput.files.length ? 'visible' : 'hidden';
-    fileNameDiv.style.fontSize = fileInput.files.length ? '0.9em' : '0';
-    fileNameDiv.style.minHeight = fileInput.files.length ? '1.2em' : '0';
-    fileNameDiv.style.transition = 'font-size 0.2s, min-height 0.2s, visibility 0.2s';
-    fileNameDiv.style.marginBottom = fileInput.files.length ? '1.2em' : '0';
-    fileNameDiv.style.padding = fileInput.files.length ? '10px' : '0';
-    fileNameDiv.style.border = fileInput.files.length ? '1px solid #999' : '0';
-    fileNameDiv.style.borderRadius = fileInput.files.length ? '4px' : '0';
-    fileNameDiv.style.background = fileInput.files.length ? 'linear-gradient(to top, #f9f9f9, #e3e3e3)' : 'none';
-
+    const name = fileInput.files.length ? fileInput.files[0].name : 'No file chosen';
+    updateFileNameDisplay(fileNameDiv, name, fileInput.files.length);
   });
-  let toggle = false;
-  document.querySelector('.close-btn').addEventListener('click',()=>{
+
+  // Zip file logic
+  const zipInput = document.getElementById('reference-zip');
+  const zipFileNameDiv = document.getElementById('zip-file-name');
+
+  zipInput.addEventListener('change', () => {
+    const name = zipInput.files.length ? zipInput.files[0].name : 'No file chosen';
+    updateFileNameDisplay(zipFileNameDiv, name, zipInput.files.length);
+  });
+
+  // Shared style logic
+  function updateFileNameDisplay(element, name, hasFile) {
+    element.textContent = name;
+    element.style.visibility = hasFile ? 'visible' : 'hidden';
+    element.style.fontSize = hasFile ? '0.9em' : '0';
+    element.style.minHeight = hasFile ? '1.2em' : '0';
+    element.style.transition = 'font-size 0.2s, min-height 0.2s, visibility 0.2s';
+    element.style.marginBottom = hasFile ? '1.2em' : '0';
+    element.style.padding = hasFile ? '10px' : '0';
+    element.style.border = hasFile ? '1px solid #999' : '0';
+    element.style.borderRadius = hasFile ? '4px' : '0';
+    element.style.background = hasFile ? 'linear-gradient(to top, #f9f9f9, #e3e3e3)' : 'none';
+  }
+
+  // Modal logic
+  document.querySelector('.close-btn').addEventListener('click', () => {
     document.querySelector('.modal-div').classList.add('hidden');
-  })
-  
-  document.querySelector('.info-btn').addEventListener('click',()=>{
+  });
+
+  document.querySelector('.info-btn').addEventListener('click', () => {
     document.querySelector('.modal-div').classList.remove('hidden');
-  })
+  });
 </script>

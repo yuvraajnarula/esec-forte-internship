@@ -6,6 +6,7 @@ const fs = require('fs');
 const router = express.Router();
 const winston = require('winston');
 const { exec } = require('child_process');
+const extract = require('extract-zip')
 
 const logger = winston.createLogger({
     level: 'info',
@@ -22,6 +23,7 @@ const logger = winston.createLogger({
 });
 
 const UPLOADS_DIR = path.join(__dirname, '../uploads/');
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
 
 const upload = multer({
     dest: UPLOADS_DIR,
@@ -68,8 +70,41 @@ function addVulnerabilitiesSheet(workbook) {
     return workbook;
 }
 
-// Helper function to safely download a file
-async function downloadFile(filename, rows) {
+function addImageProofSheet(workbook, rows, extractedImages) {
+    const imageSheet = workbook.addWorksheet('Image Proofs');
+    imageSheet.columns = [
+        { header: 'Vulnerability ID', key: 'vul_id', width: 15 },
+        { header: 'Image Path', key: 'image_path', width: 60 }
+    ];
+    const imageProofData = [];
+    rows.forEach(row => {
+        const matchingImages = extractedImages.filter(imagePath => {
+            const filename = path.basename(imagePath).toLowerCase();
+            return filename.includes(row.vul_id) || 
+                   filename.includes(row.vul_title.toLowerCase().replace(/\s+/g, '_'));
+        });
+
+        // Add an entry for each matching image
+        matchingImages.forEach(imagePath => {
+            imageProofData.push({
+                vul_id: row.vul_id,
+                image_path: imagePath
+            });
+        });
+    });
+
+    imageSheet.addRows(imageProofData);
+    const headerRow = imageSheet.getRow(1);
+    headerRow.font = { bold: true };
+    headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFD3D3D3' }
+    };
+
+    return workbook;
+}
+async function downloadFile(filename, rows, extractedImages = []) {
     try {
         const name = path.basename(filename);
         const safeFilename = name.replace(/[^a-zA-Z0-9_.-]/g, '_');
@@ -127,23 +162,19 @@ async function downloadFile(filename, rows) {
             // Process reference field specifically
             if (processedRow.reference) {
                 if (typeof processedRow.reference === 'object') {
-                    // Convert object references to strings, preferring hyperlink over text
                     if (processedRow.reference.hyperlink) {
                         processedRow.reference = processedRow.reference.hyperlink;
                     } else if (processedRow.reference.text) {
                         processedRow.reference = processedRow.reference.text;
                     } else {
-                        // For any other object format, convert to string
                         try {
                             processedRow.reference = JSON.stringify(processedRow.reference);
                         } catch (e) {
-                            // If stringification fails, use a default value
                             processedRow.reference = null;
                             logger.warn(`Could not process reference for row with title: ${processedRow.vul_title}`);
                         }
                     }
                 }
-                // If already a string or null/undefined, leave as is
             }
 
             return processedRow;
@@ -165,15 +196,14 @@ async function downloadFile(filename, rows) {
             }
         }
         logger.info("Data Validation added");
-
-        // Add vulnerabilities sheet
         addVulnerabilitiesSheet(workbook);
         logger.info("Vulnerabilities sheet added");
+        
+        // Add image proof sheet
+        addImageProofSheet(workbook, rows, extractedImages);
+        logger.info("Image proofs sheet added");
 
-        // Save the XLSX file
         await workbook.xlsx.writeFile(xlsxName);
-
-        // Convert to ODS
         let odsPath = null;
         try {
             odsPath = await convertToOds(xlsxName);
@@ -197,16 +227,110 @@ async function downloadFile(filename, rows) {
 function isValidVulnerability(title) {
     return vulnerabilities.some(vuln => vuln.includes(title));
 }
+async function processZIPOrRAR(filepath) {
+    try {
+        const ext = path.extname(filepath).toLowerCase();
 
-// Add this after the existing helper functions
+        if (ext === '.zip') {
+            await extract(filepath, { dir: UPLOADS_DIR });
+            logger.info(`Extracted ZIP file: ${filepath}`);
+
+            const extractedFiles = await listFilesRecursive(UPLOADS_DIR);
+            const imageFiles = extractedFiles.filter(file => IMAGE_EXTENSIONS.includes(path.extname(file).toLowerCase()));
+
+            if (imageFiles.length === 0) {
+                throw new Error('No image files found in ZIP archive. Please include image proofs.');
+            }
+
+            logger.info(`Found ${imageFiles.length} image(s) in the archive.`);
+            return imageFiles;
+        } else {
+            throw new Error('Only .zip files are supported currently.');
+        }
+    } catch (err) {
+        logger.error(`Error processing ZIP/RAR file: ${err.message}`);
+        throw err;
+    }
+}
+
+async function listFilesRecursive(dir) {
+    let results = [];
+    const list = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const file of list) {
+        const filePath = path.resolve(dir, file.name);
+        if (file.isDirectory()) {
+            const subFiles = await listFilesRecursive(filePath);
+            results = results.concat(subFiles);
+        } else {
+            results.push(filePath);
+        }
+    }
+    return results;
+}
+async function ImageTableOps(imageFiles, rows) {
+    try {
+        const imageProofs = [];        
+        rows.forEach(row => {
+            const matchingImages = imageFiles.filter(imagePath => {
+                const filename = path.basename(imagePath).toLowerCase();
+                return filename.includes(row.vul_id) || 
+                       filename.includes(row.vul_title.toLowerCase().replace(/\s+/g, '_'));
+            });
+            matchingImages.forEach(imagePath => {
+                imageProofs.push([
+                    row.vul_id,
+                    imagePath,
+                    new Date()
+                ]);
+            });
+        });
+
+        if (imageProofs.length === 0) {
+            logger.warn('No matching images found for vulnerabilities');
+            return;
+        }
+
+        const transaction = await sequelize.transaction();
+        try {
+            const BATCH_SIZE = 100;
+            for (let i = 0; i < imageProofs.length; i += BATCH_SIZE) {
+                const batch = imageProofs.slice(i, i + BATCH_SIZE);
+                const placeholders = batch.map(() => '(?, ?, ?)').join(',');
+
+                await sequelize.query(
+                    `INSERT INTO image_proofs 
+                    (vul_id, image_url, created_on) 
+                    VALUES ${placeholders}`,
+                    {
+                        replacements: batch.flat(),
+                        type: sequelize.QueryTypes.INSERT,
+                        transaction
+                    }
+                );
+                
+                logger.info(`Inserted batch ${Math.floor(i/BATCH_SIZE) + 1} of image proofs`);
+            }
+
+            await transaction.commit();
+            logger.info(`Successfully linked ${imageProofs.length} images to vulnerabilities`);
+
+        } catch (error) {
+            await transaction.rollback();
+            logger.error(`Failed to insert image proofs: ${error.message}`);
+            throw error;
+        }
+
+    } catch (error) {
+        logger.error(`Error in ImageTableOps: ${error.message}`);
+        throw error;
+    }
+}
 async function convertToOds(xlsxPath) {
     try {
-        // Get directory and filename
         const dir = path.dirname(xlsxPath);
         const filename = path.basename(xlsxPath, '.xlsx');
 
         return new Promise((resolve, reject) => {
-            // Run soffice command to convert
             exec(`soffice --headless --convert-to ods "${xlsxPath}" --outdir "${dir}"`, (error, stdout, stderr) => {
                 if (error) {
                     logger.error(`483 - Conversion error: ${error.message}`);
@@ -229,44 +353,65 @@ async function convertToOds(xlsxPath) {
     }
 }
 
-router.post('/submit', upload.single('file'), async (req, res) => {
-    let tempFilePath = null;
+router.post('/submit', upload.fields([
+    { name: 'file', maxCount: 1 },
+    { name: 'referenceZip', maxCount: 1 }
+]), async (req, res) => {
+    let reportPath = null;
+    let zipPath = null;
+    let extractedImageFiles = [];
+    
     try {
-        if (!req.file) {
-            return res.status(400).send('No file uploaded.');
+        const reportFile = req.files['file']?.[0];
+        const zipFile = req.files['referenceZip']?.[0];
+        
+        if (!reportFile || !zipFile) {
+            return res
+                .status(400)
+                .send('Both an audit report (.xlsx/.ods) and a reference zip (.zip/.rar) are required.');
         }
-
-        const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
-        if (req.file.size > MAX_FILE_SIZE) {
-            return res.status(400).send('File size exceeds 20MB limit');
+        
+        reportPath = reportFile.path;
+        zipPath = zipFile.path;
+        const reportName = reportFile.originalname;
+        const reportExt = path.extname(reportName).toLowerCase();
+        const zipName = zipFile.originalname;
+        const zipExt = path.extname(zipName).toLowerCase();
+        
+        if (!['.xlsx', '.ods'].includes(reportExt)) {
+            return res
+                .status(400)
+                .send('Unsupported report format—please upload .xlsx or .ods');
         }
-
-        tempFilePath = req.file.path;
-        const origName = req.file.originalname;
-        const ext = path.extname(origName).toLowerCase();
-
-        if (!['.xlsx', '.ods'].includes(ext)) {
-            return res.status(400).send('Unsupported format—please upload .xlsx or .ods');
+        
+        if (zipExt !== '.zip' ) {
+            return res
+                .status(400)
+                .send('Unsupported reference archive—please upload .zip or .rar');
+        }
+        try {
+            extractedImageFiles = await processZIPOrRAR(zipPath); 
+            logger.log('info', `Successfully extracted ${extractedImageFiles.length} image files from ZIP`);
+        } catch (zipError) {
+            logger.log('error', `ZIP processing error: ${zipError.message}`);
+            return res.status(400).send(`Error processing ZIP file: ${zipError.message}`);
         }
 
         let workbook = new ExcelJS.Workbook();
         let jsonData = [];
 
         try {
-            await workbook.xlsx.readFile(tempFilePath);
+            await workbook.xlsx.readFile(reportPath);
             const sheet = workbook.getWorksheet(1);
 
             if (!sheet) {
                 return res.status(400).send('Uploaded file contains no worksheets.');
             }
-
-            // Get headers from the first row
             const headers = [];
             sheet.getRow(1).eachCell((cell) => {
                 headers.push(cell.value);
             });
 
-            // Convert worksheet data to JSON
             jsonData = [];
             sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
                 if (rowNumber > 1) {
@@ -274,15 +419,12 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                     row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
                         if (colNumber <= headers.length) {
                             let v = cell.value;
-                            // If it’s a hyperlink object, use its URL
                             if (v && typeof v === 'object' && v.hyperlink) {
                                 v = v.hyperlink;
                             }
-                            // If it’s a rich-text object, join its parts
                             else if (v && typeof v === 'object' && Array.isArray(v.richText)) {
                                 v = v.richText.map(part => part.text).join('');
                             }
-                            // Otherwise leave v as-is (string, number, Date, or null)
                             rowData[headers[colNumber - 1]] = v;
                         }
                     });
@@ -299,18 +441,14 @@ router.post('/submit', upload.single('file'), async (req, res) => {
 
         let colFromDB;
         try {
-            // Change the table name from ISSUE_MASTER to vulnerabilities
             [colFromDB] = await sequelize.query('DESC vulnerabilities');
         } catch (err) {
             throw new Error(`Database error: ${err.message}`);
         }
-
-
         const colFromDBNames = colFromDB.map(col => col.Field);
         const spreadsheetCols = Object.keys(jsonData[0]);
 
         const invalidCols = spreadsheetCols.filter(col => !colFromDBNames.includes(col));
-        // Updated required columns for vulnerabilities
         const missingRequiredCols = ['app_id', 'vul_title', 'description']
             .filter(required => !spreadsheetCols.includes(required));
 
@@ -319,18 +457,13 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             if (invalidCols.length > 0) {
                 message += `Invalid columns found: ${invalidCols.join(', ')}. `;
             }
-
             if (missingRequiredCols.length > 0) {
                 message += `Missing required columns: ${missingRequiredCols.join(', ')}. `;
             }
-
             const templateFilename = 'template_vulnerabilities.xlsx';
             const newFilePath = path.join(UPLOADS_DIR, templateFilename);
-
             const templateWorkbook = new ExcelJS.Workbook();
             const templateSheet = templateWorkbook.addWorksheet('Template');
-
-            // Define columns based on DB schema for vulnerabilities
             templateSheet.columns = colFromDBNames.map(col => {
                 let width;
                 switch (col) {
@@ -353,7 +486,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 return { header: col, key: col, width };
             });
 
-            // Format header row
             const headerRow = templateSheet.getRow(1);
             headerRow.font = { bold: true };
             headerRow.fill = {
@@ -362,7 +494,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
                 fgColor: { argb: 'FFD3D3D3' }
             };
 
-            // Add sample row with vulnerabilities structure data
             const sampleRowData = {};
             colFromDBNames.forEach(col => {
                 switch (col) {
@@ -410,7 +541,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             templateSheet.addRow(sampleRowData);
             const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
             logger.log('info', `${formulaRef}`)
-            // Add data validation
             for (let i = 2; i < 100000; i++) {
                 templateSheet.getCell(`C${i}`).dataValidation = {
                     type: 'list',
@@ -423,7 +553,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             }
             addVulnerabilitiesSheet(templateWorkbook);
 
-            // Save the template file
             await templateWorkbook.xlsx.writeFile(newFilePath);
 
             return res.status(400).send(
@@ -438,7 +567,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             const rowNum = index + 2;
             const errors = [];
 
-            // Validation for vulnerabilities structure
             if (!row.app_id) errors.push('Missing app_id');
             if (!row.vul_title) errors.push('Missing vul_title');
             if (!row.description) errors.push('Missing description');
@@ -461,8 +589,6 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             }
         });
 
-
-
         if (validRows.length > 0) {
             const lenientPatterns = vulnerabilities.map(vul => {
                 const escaped = vul.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -477,14 +603,17 @@ router.post('/submit', upload.single('file'), async (req, res) => {
             }
 
             try {
-                const result = await downloadFile(origName, rowsToInsert);
+                const result = await downloadFile(reportName, rowsToInsert, extractedImageFiles);
                 await batchInsert(rowsToInsert);
+                await ImageTableOps(extractedImageFiles,rowsToInsert)
                 logger.log('info', `Rows inserted: ${rowsToInsert.length}`);
+                
                 res.render('preview', {
                     rows: rowsToInsert,
                     totalRows: validRows,
-                    filename: req.file.originalname,
+                    filename: reportPath,
                     downloadName: result.downloadNameOds,
+                    imageFiles: extractedImageFiles 
                 });
             } catch (error) {
                 logger.log('error', `443 - ${error}`)
@@ -498,46 +627,51 @@ router.post('/submit', upload.single('file'), async (req, res) => {
         logger.log('error', `451 ${err}`)
         return res.status(500).send(`Error processing file: ${err.message}`);
     } finally {
-        if (tempFilePath) {
-            fs.unlink(tempFilePath, err => {
-                if (err) console.error('Error deleting temporary file:', err);
+        // Clean up uploaded files
+        [reportPath, zipPath].forEach(p => {
+            if (p) {
+                fs.unlink(p, unlinkErr => {
+                    if (unlinkErr) {
+                        console.error('Failed to delete temp file', p, unlinkErr);
+                    }
+                });
+            }
+        });
+        if (extractedImageFiles.length > 0) {
+            logger.log('info', `Extracted ${extractedImageFiles.length} images for processing`);
+            extractedImageFiles.forEach(file => {
+                fs.unlink(file, unlinkErr => {
+                    if (unlinkErr) {
+                        console.error('Failed to delete extracted image file', file, unlinkErr);
+                    }
+                }); 
             });
-        }
+        }  
     }
 });
 
 async function batchInsert(rows) {
     const transaction = await sequelize.transaction();
     try {
-        // Make one final pass to ensure all reference objects are properly stringified
-        // This is critical as we're seeing references with object values despite earlier processing
         const finalProcessedRows = rows.map(row => {
-            // Create a fresh copy to avoid any reference issues
             const newRow = { ...row };
 
-            // Special handling for reference field
             if (newRow.reference !== null && newRow.reference !== undefined) {
                 if (typeof newRow.reference === 'object') {
-                    // Log this unexpected state for debugging
                     logger.warn(`Found object reference despite preprocessing: ${JSON.stringify(newRow.reference)}`);
-
-                    // Extract value, with fallbacks
                     if (newRow.reference.hyperlink) {
                         newRow.reference = String(newRow.reference.hyperlink);
                     } else if (newRow.reference.text) {
                         newRow.reference = String(newRow.reference.text);
                     } else {
-                        // Last resort - convert to JSON string
                         try {
                             newRow.reference = JSON.stringify(newRow.reference);
                         } catch (e) {
-                            // If all else fails, set to null
                             newRow.reference = null;
                             logger.error(`Failed to process reference: ${e.message}`);
                         }
                     }
                 } else if (typeof newRow.reference !== 'string' && newRow.reference !== null) {
-                    // Convert any non-string, non-null values to strings
                     newRow.reference = String(newRow.reference);
                 }
             }
@@ -555,12 +689,9 @@ async function batchInsert(rows) {
             const batch = finalProcessedRows.slice(i, i + BATCH_SIZE);
             const valuesClause = batch.map(() => placeholdersPerRow).join(',');
 
-            // For each row, ensure the reference field is a string or null before flattening
             const flatReplacements = batch.flatMap(row => {
-                // Double-check reference one last time
                 let reference = row.reference;
                 if (reference !== null && reference !== undefined && typeof reference === 'object') {
-                    // This shouldn't happen at this point, but as a final safeguard:
                     logger.error(`Found object reference at SQL generation stage: ${JSON.stringify(reference)}`);
                     reference = null;
                 }
@@ -574,15 +705,13 @@ async function batchInsert(rows) {
                     row.description,
                     row.impact || null,
                     row.recommendation || null,
-                    reference, // This should now be guaranteed to be a string or null
+                    reference, 
                     row.status || 'Open',
                     row.created_on
                 ];
             });
 
-            // Add debug logging to help identify issues
             logger.info(`Processing batch ${i / BATCH_SIZE + 1} with ${batch.length} items`);
-
             try {
                 await sequelize.query(
                     `INSERT INTO vulnerabilities (
@@ -603,10 +732,8 @@ async function batchInsert(rows) {
                         type: sequelize.QueryTypes.INSERT
                     }
                 );
-
                 insertedCount += batch.length;
             } catch (innerError) {
-                // Log specific details about the failing batch and values
                 logger.error(`Insert error in batch ${i / BATCH_SIZE + 1}: ${innerError.message}`);
                 logger.error(`Problem batch data: ${JSON.stringify(batch.map(r => ({
                     app_id: r.app_id,
@@ -615,7 +742,6 @@ async function batchInsert(rows) {
                     reference_type: typeof r.reference
                 })))}`);
 
-                // Rethrow to trigger transaction rollback
                 throw innerError;
             }
         }
