@@ -253,7 +253,7 @@ router.post('/submit', upload.fields([
                 }
             }
             addVulnerabilitiesSheet(templateWorkbook);
-
+            addImageProofSheet(templateWorkbook, [],extractedImageFiles);
             await templateWorkbook.xlsx.writeFile(newFilePath);
 
             return res.status(400).send(

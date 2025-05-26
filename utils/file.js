@@ -3,8 +3,9 @@ const winston = require('winston');
 const { createExtractorFromFile } = require('node-unrar-js');
 const fs = require('fs');
 const ExcelJS = require('exceljs');
-
-const { getVulnerabilities } = require('../db');
+const { exec } = require('child_process');
+const extract = require('extract-zip')
+const { getVulnerabilities, sequelize } = require('../db');
 
 
 let vulnerabilities = [];
@@ -74,13 +75,19 @@ function addImageProofSheet(workbook, rows, extractedImages) {
                    filename.includes(row.vul_title.toLowerCase().replace(/\s+/g, '_'));
         });
 
-        // Add an entry for each matching image
-        matchingImages.forEach(imagePath => {
+        if (matchingImages.length === 0) {
             imageProofData.push({
                 vul_id: row.vul_id,
-                image_path: imagePath
+                image_path: 'No image available'
             });
-        });
+        } else {
+            matchingImages.forEach(imagePath => {
+                imageProofData.push({
+                    vul_id: row.vul_id,
+                    image_path: imagePath
+                });
+            });
+        }
     });
 
     imageSheet.addRows(imageProofData);
@@ -104,7 +111,6 @@ async function downloadFile(filename, rows, extractedImages = []) {
 
         const xlsxName = path.join(UPLOADS_DIR, `${filenameBase}.xlsx`);
 
-        // Updated columns for vulnerabilities table structure
         const colHeaders = [
             'vul_id', 'app_id', 'vul_title', 'affected_url', 'risk_rating',
             'affected_parameters', 'description', 'impact',
@@ -217,6 +223,15 @@ async function downloadFile(filename, rows, extractedImages = []) {
 function isValidVulnerability(title) {
     return vulnerabilities.some(vuln => vuln.includes(title));
 }
+function isValidImage(filePath) {
+    try {
+        const ext = path.extname(filePath).toLowerCase();
+        return IMAGE_EXTENSIONS.includes(ext) && fs.existsSync(filePath);
+    } catch (err) {
+        logger.error(`Invalid image file: ${filePath}, Error: ${err.message}`);
+        return false;
+    }
+}
 async function processZIPOrRAR(filepath) {
     try {
         const ext = path.extname(filepath).toLowerCase();
@@ -238,17 +253,20 @@ async function processZIPOrRAR(filepath) {
             throw new Error(`Unsupported file type: ${ext}. Only .zip and .rar files are supported.`);
         }
 
-        const extractedFiles = await listFilesRecursive(UPLOADS_DIR);
-        const imageFiles = extractedFiles.filter(file => 
-            IMAGE_EXTENSIONS.includes(path.extname(file).toLowerCase())
-        );
+        try {
+            const extractedFiles = await listFilesRecursive(UPLOADS_DIR);
+            const imageFiles = extractedFiles.filter(file => IMAGE_EXTENSIONS.includes(path.extname(file).toLowerCase()));
 
-        if (imageFiles.length === 0) {
-            throw new Error('No image files found in archive. Please include image proofs.');
+            if (imageFiles.length === 0) {
+                throw new Error('No image files found in archive. Please include image proofs.');
+            }
+
+            logger.info(`Found ${imageFiles.length} image(s) in the archive.`);
+            return imageFiles;
+        } catch (err) {
+            logger.error(`Error processing ZIP/RAR file: ${err.message}`);
+            throw err;
         }
-
-        logger.info(`Found ${imageFiles.length} image(s) in the archive.`);
-        return imageFiles;
     } catch (err) {
         logger.error(`Error processing ZIP/RAR file: ${err.message}`);
         throw err;
@@ -267,24 +285,103 @@ async function listFilesRecursive(dir) {
             results.push(filePath);
         }
     }
+    logger.log('info', `Listed files in directory: ${dir}`);
+    logger.log('info', `Total files found: ${results.length}`);
+    results.forEach(file => {
+        logger.log('info', `File: ${file}`);
+    });
     return results;
 }
 async function ImageTableOps(imageFiles, rows) {
     try {
-        const imageProofs = [];        
-        rows.forEach(row => {
-            const matchingImages = imageFiles.filter(imagePath => {
-                const filename = path.basename(imagePath).toLowerCase();
-                return filename.includes(row.vul_id) || 
-                       filename.includes(row.vul_title.toLowerCase().replace(/\s+/g, '_'));
+        const imageProofs = [];
+        
+        // Create a map of used images to avoid duplicates
+        const usedImages = new Set();
+        
+        rows.forEach((row, rowIndex) => {
+            const normalizedTitle = row.vul_title
+                .toLowerCase()
+                .replace(/[\s_-]+/g, '') // Remove spaces and underscores
+                .replace(/[^\w]/g, '');  // Remove non-alphanumeric characters
+
+            logger.info(`Processing vulnerability: ID=${row.vul_id}, Title=${row.vul_title}, Normalized Title=${normalizedTitle}`);
+
+            // Strategy 1: Try to match by vulnerability ID
+            let matchingImages = imageFiles.filter(imagePath => {
+                if (usedImages.has(imagePath)) return false;
+                
+                const filename = path.basename(imagePath, path.extname(imagePath))
+                    .toLowerCase()
+                    .replace(/[\s_-]+/g, '')
+                    .replace(/[^\w]/g, '');
+
+                return filename.includes(row.vul_id.toString());
             });
-            matchingImages.forEach(imagePath => {
+
+            // Strategy 2: If no match by ID, try partial title matching with keywords
+            if (matchingImages.length === 0) {
+                const titleKeywords = extractKeywords(row.vul_title);
+                
+                matchingImages = imageFiles.filter(imagePath => {
+                    if (usedImages.has(imagePath)) return false;
+                    
+                    const filename = path.basename(imagePath, path.extname(imagePath))
+                        .toLowerCase()
+                        .replace(/[\s_-]+/g, '')
+                        .replace(/[^\w]/g, '');
+
+                    // Check if filename contains any of the keywords
+                    return titleKeywords.some(keyword => 
+                        filename.includes(keyword) || 
+                        keyword.includes(filename) // For short filenames
+                    );
+                });
+            }
+
+            // Strategy 3: If still no match, try fuzzy matching based on common vulnerability types
+            if (matchingImages.length === 0) {
+                const vulnType = categorizeVulnerability(row.vul_title);
+                
+                matchingImages = imageFiles.filter(imagePath => {
+                    if (usedImages.has(imagePath)) return false;
+                    
+                    const filename = path.basename(imagePath, path.extname(imagePath))
+                        .toLowerCase();
+
+                    return checkVulnerabilityTypeMatch(filename, vulnType);
+                });
+            }
+
+            // Strategy 4: Sequential assignment for remaining unmatched vulnerabilities
+            if (matchingImages.length === 0) {
+                const availableImages = imageFiles.filter(imagePath => !usedImages.has(imagePath));
+                
+                if (availableImages.length > 0) {
+                    // Assign the first available image
+                    matchingImages = [availableImages[0]];
+                    logger.info(`Sequential assignment: Assigning ${availableImages[0]} to vulnerability ID=${row.vul_id}`);
+                }
+            }
+
+            if (matchingImages.length > 0) {
+                matchingImages.forEach(imagePath => {
+                    logger.info(`Matched image: ${imagePath} for vulnerability ID=${row.vul_id}`);
+                    usedImages.add(imagePath); // Mark as used
+                    imageProofs.push([
+                        row.vul_id,
+                        imagePath,
+                        new Date()
+                    ]);
+                });
+            } else {
+                logger.warn(`No images found for vulnerability ID: ${row.vul_id}, Title: ${row.vul_title}`);
                 imageProofs.push([
                     row.vul_id,
-                    imagePath,
+                    'No image available',
                     new Date()
                 ]);
-            });
+            }
         });
 
         if (imageProofs.length === 0) {
@@ -292,6 +389,7 @@ async function ImageTableOps(imageFiles, rows) {
             return;
         }
 
+        // Database insertion logic remains the same
         const transaction = await sequelize.transaction();
         try {
             const BATCH_SIZE = 100;
@@ -309,24 +407,102 @@ async function ImageTableOps(imageFiles, rows) {
                         transaction
                     }
                 );
-                
-                logger.info(`Inserted batch ${Math.floor(i/BATCH_SIZE) + 1} of image proofs`);
+
+                logger.info(`Inserted batch ${Math.floor(i / BATCH_SIZE) + 1} of image proofs`);
             }
-
-            await transaction.commit();
-            logger.info(`Successfully linked ${imageProofs.length} images to vulnerabilities`);
-
         } catch (error) {
             await transaction.rollback();
             logger.error(`Failed to insert image proofs: ${error.message}`);
             throw error;
         }
 
+        await transaction.commit();
+        logger.info(`Successfully linked ${imageProofs.length} images to vulnerabilities`);
+
     } catch (error) {
         logger.error(`Error in ImageTableOps: ${error.message}`);
         throw error;
     }
 }
+
+// Helper function to extract meaningful keywords from vulnerability titles
+function extractKeywords(title) {
+    const keywords = [];
+    const normalizedTitle = title.toLowerCase();
+    
+    // Extract common vulnerability keywords
+    const vulnKeywords = [
+        'xss', 'sql', 'injection', 'csrf', 'sqli', 'rce', 'lfi', 'rfi', 
+        'xxe', 'ssrf', 'idor', 'bac', 'auth', 'bypass', 'upload', 'directory',
+        'traversal', 'disclosure', 'leak', 'exposure', 'misconfiguration'
+    ];
+    
+    vulnKeywords.forEach(keyword => {
+        if (normalizedTitle.includes(keyword)) {
+            keywords.push(keyword);
+        }
+    });
+    
+    // Extract acronyms (words in parentheses)
+    const acronymMatch = title.match(/\(([^)]+)\)/g);
+    if (acronymMatch) {
+        acronymMatch.forEach(match => {
+            const acronym = match.replace(/[()]/g, '').toLowerCase();
+            keywords.push(acronym);
+        });
+    }
+    
+    // If no specific keywords found, use significant words from title
+    if (keywords.length === 0) {
+        const words = normalizedTitle
+            .replace(/[^\w\s]/g, '')
+            .split(/\s+/)
+            .filter(word => word.length > 3) // Only words longer than 3 characters
+            .slice(0, 3); // Take first 3 significant words
+        
+        keywords.push(...words);
+    }
+    
+    return keywords;
+}
+
+// Helper function to categorize vulnerability types
+function categorizeVulnerability(title) {
+    const lowerTitle = title.toLowerCase();
+    
+    if (lowerTitle.includes('xss') || lowerTitle.includes('cross-site scripting')) {
+        return 'xss';
+    } else if (lowerTitle.includes('sql') || lowerTitle.includes('injection')) {
+        return 'injection';
+    } else if (lowerTitle.includes('csrf') || lowerTitle.includes('cross-site request')) {
+        return 'csrf';
+    } else if (lowerTitle.includes('upload') || lowerTitle.includes('file')) {
+        return 'upload';
+    } else if (lowerTitle.includes('auth') || lowerTitle.includes('bypass')) {
+        return 'auth';
+    } else if (lowerTitle.includes('disclosure') || lowerTitle.includes('exposure')) {
+        return 'disclosure';
+    }
+    
+    return 'general';
+}
+
+// Helper function to match filenames against vulnerability categories
+function checkVulnerabilityTypeMatch(filename, vulnType) {
+    const typePatterns = {
+        'xss': ['xss', 'script', 'cross', 'site'],
+        'injection': ['inject', 'sql', 'sqli', 'payload'],
+        'csrf': ['csrf', 'token', 'request'],
+        'upload': ['upload', 'file', 'shell'],
+        'auth': ['auth', 'login', 'bypass', 'access'],
+        'disclosure': ['info', 'leak', 'exposure', 'error'],
+        'general': ['vuln', 'exploit', 'poc', 'proof']
+    };
+    
+    const patterns = typePatterns[vulnType] || typePatterns['general'];
+    return patterns.some(pattern => filename.includes(pattern));
+}
+
 async function convertToOds(xlsxPath) {
     try {
         const dir = path.dirname(xlsxPath);
