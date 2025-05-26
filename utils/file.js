@@ -61,14 +61,17 @@ function addVulnerabilitiesSheet(workbook) {
     return workbook;
 }
 
-function addImageProofSheet(workbook, rows, extractedImages) {
+async function addImageProofSheet(workbook, rows, extractedImages) {
     const imageSheet = workbook.addWorksheet('Image Proofs');
     imageSheet.columns = [
         { header: 'Vulnerability ID', key: 'vul_id', width: 15 },
-        { header: 'Image Path', key: 'image_path', width: 60 }
+        { header: 'Image Path', key: 'image_path', width: 60 },
+        { header: 'Image Preview', key: 'image_preview', width: 40 }
     ];
-    const imageProofData = [];
-    rows.forEach(row => {
+
+    let currentRow = 2; // Start from row 2 (after header)
+
+    for (const row of rows) {
         const matchingImages = extractedImages.filter(imagePath => {
             const filename = path.basename(imagePath).toLowerCase();
             return filename.includes(row.vul_id) || 
@@ -76,21 +79,88 @@ function addImageProofSheet(workbook, rows, extractedImages) {
         });
 
         if (matchingImages.length === 0) {
-            imageProofData.push({
+            // Add row data immediately
+            imageSheet.addRow({
                 vul_id: row.vul_id,
-                image_path: 'No image available'
+                image_path: 'No image available',
+                image_preview: 'No image available'
             });
+            currentRow++;
         } else {
-            matchingImages.forEach(imagePath => {
-                imageProofData.push({
+            for (const imagePath of matchingImages) {
+                // Add row data first
+                imageSheet.addRow({
                     vul_id: row.vul_id,
-                    image_path: imagePath
+                    image_path: path.basename(imagePath),
+                    image_preview: ''
                 });
-            });
-        }
-    });
 
-    imageSheet.addRows(imageProofData);
+                try {
+                    if (fs.existsSync(imagePath)) {
+                        const imageBuffer = fs.readFileSync(imagePath);
+                        const imageExtension = path.extname(imagePath).toLowerCase().substring(1);
+
+                        let imageType;
+                        switch (imageExtension) {
+                            case 'jpg':
+                            case 'jpeg':
+                                imageType = 'jpeg';
+                                break;
+                            case 'png':
+                                imageType = 'png';
+                                break;
+                            case 'gif':
+                                imageType = 'gif';
+                                break;
+                            case 'bmp':
+                                imageType = 'bmp';
+                                break;
+                            case 'webp':
+                                logger.warn(`WebP format not supported for embedding: ${imagePath}`);
+                                currentRow++;
+                                continue;
+                            default:
+                                logger.warn(`Unsupported image format for embedding: ${imagePath}`);
+                                currentRow++;
+                                continue;
+                        }
+                        
+                        const imageId = workbook.addImage({
+                            buffer: imageBuffer,
+                            extension: imageType,
+                        });
+                        
+                        const maxWidth = 300; 
+                        const maxHeight = 200; 
+                        
+                        let imageWidth = maxWidth;
+                        let imageHeight = maxHeight;
+                        
+                        // Place image in the current row (column C, which is index 2)
+                        imageSheet.addImage(imageId, {
+                            tl: { col: 2, row: currentRow - 1 }, // currentRow - 1 because Excel rows are 0-indexed for images
+                            ext: { width: imageWidth, height: imageHeight },
+                            editAs: 'oneCell'
+                        });
+
+                        // Set row height to accommodate the image
+                        const excelRowHeight = Math.max(150, (imageHeight * 0.75)); 
+                        imageSheet.getRow(currentRow).height = excelRowHeight;
+
+                        logger.info(`Embedded image: ${imagePath} in row ${currentRow}`);
+                    } else {
+                        logger.warn(`Image file not found: ${imagePath}`);
+                    }
+                } catch (error) {
+                    logger.error(`Failed to embed image ${imagePath}: ${error.message}`);
+                }
+                
+                currentRow++;
+            }
+        }
+    }
+    
+    // Format header row
     const headerRow = imageSheet.getRow(1);
     headerRow.font = { bold: true };
     headerRow.fill = {
@@ -99,8 +169,12 @@ function addImageProofSheet(workbook, rows, extractedImages) {
         fgColor: { argb: 'FFD3D3D3' }
     };
 
+    // Set default row height
+    imageSheet.properties.defaultRowHeight = 100;
+
     return workbook;
 }
+
 async function downloadFile(filename, rows, extractedImages = []) {
     try {
         const name = path.basename(filename);
@@ -364,6 +438,7 @@ async function ImageTableOps(imageFiles, rows) {
                 }
             }
 
+            // Only insert if we have matching images
             if (matchingImages.length > 0) {
                 matchingImages.forEach(imagePath => {
                     logger.info(`Matched image: ${imagePath} for vulnerability ID=${row.vul_id}`);
@@ -375,18 +450,15 @@ async function ImageTableOps(imageFiles, rows) {
                     ]);
                 });
             } else {
-                logger.warn(`No images found for vulnerability ID: ${row.vul_id}, Title: ${row.vul_title}`);
-                imageProofs.push([
-                    row.vul_id,
-                    'No image available',
-                    new Date()
-                ]);
+                // Just log the warning, don't insert anything
+                logger.warn(`No images found for vulnerability ID: ${row.vul_id}, Title: ${row.vul_title} - Skipping database insertion`);
             }
         });
 
+        // Check if we have any image proofs to insert
         if (imageProofs.length === 0) {
-            logger.warn('No matching images found for vulnerabilities');
-            return;
+            logger.warn('No matching images found for any vulnerabilities - No database insertions will be made');
+            return; // Exit early if no matches found
         }
 
         // Database insertion logic remains the same
@@ -465,8 +537,6 @@ function extractKeywords(title) {
     
     return keywords;
 }
-
-// Helper function to categorize vulnerability types
 function categorizeVulnerability(title) {
     const lowerTitle = title.toLowerCase();
     
