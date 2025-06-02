@@ -61,7 +61,7 @@ function addVulnerabilitiesSheet(workbook) {
     return workbook;
 }
 
-async function addImageProofSheet(workbook, rows, extractedImages) {
+async function addImageProofSheet(workbook, rows) {
     const imageSheet = workbook.addWorksheet('Image Proofs');
     imageSheet.columns = [
         { header: 'Vulnerability ID', key: 'vul_id', width: 15 },
@@ -69,98 +69,63 @@ async function addImageProofSheet(workbook, rows, extractedImages) {
         { header: 'Image Preview', key: 'image_preview', width: 40 }
     ];
 
-    let currentRow = 2; // Start from row 2 (after header)
+    rows.forEach((row, index) => {
+        const imgRefAddress = row.img_ref_address || '';
+        const imagePaths = imgRefAddress.split(';').map(path => path.trim());
+        let imageFound = false;
 
-    for (const row of rows) {
-        const matchingImages = extractedImages.filter(imagePath => {
-            const filename = path.basename(imagePath).toLowerCase();
-            return filename.includes(row.vul_id) || 
-                   filename.includes(row.vul_title.toLowerCase().replace(/\s+/g, '_'));
+        imagePaths.forEach((imagePath) => {
+            if (imagePath && fs.existsSync(imagePath)) {
+                imageFound = true;
+                const imageBuffer = fs.readFileSync(imagePath);
+                const imageExtension = path.extname(imagePath).toLowerCase().substring(1);
+
+                let imageType;
+                switch (imageExtension) {
+                    case 'jpg':
+                    case 'jpeg':
+                        imageType = 'jpeg';
+                        break;
+                    case 'png':
+                        imageType = 'png';
+                        break;
+                    case 'gif':
+                        imageType = 'gif';
+                        break;
+                    case 'bmp':
+                        imageType = 'bmp';
+                        break;
+                    default:
+                        imageType = null;
+                }
+
+                if (imageType) {
+                    const imageId = workbook.addImage({
+                        buffer: imageBuffer,
+                        extension: imageType,
+                    });
+
+                    const rowIndex = index + 2; // Account for header row
+                    imageSheet.addImage(imageId, {
+                        tl: { col: 2, row: rowIndex - 1 },
+                        ext: { width: 300, height: 200 },
+                        editAs: 'oneCell',
+                    });
+
+                    imageSheet.getRow(rowIndex).height = 150; // Adjust row height for the image
+                }
+            }
         });
 
-        if (matchingImages.length === 0) {
-            // Add row data immediately
+        if (!imageFound) {
             imageSheet.addRow({
                 vul_id: row.vul_id,
-                image_path: 'No image available',
-                image_preview: 'No image available'
+                image_path: imgRefAddress || 'No image available',
+                image_preview: '404 Not Found',
             });
-            currentRow++;
-        } else {
-            for (const imagePath of matchingImages) {
-                // Add row data first
-                imageSheet.addRow({
-                    vul_id: row.vul_id,
-                    image_path: path.basename(imagePath),
-                    image_preview: ''
-                });
-
-                try {
-                    if (fs.existsSync(imagePath)) {
-                        const imageBuffer = fs.readFileSync(imagePath);
-                        const imageExtension = path.extname(imagePath).toLowerCase().substring(1);
-
-                        let imageType;
-                        switch (imageExtension) {
-                            case 'jpg':
-                            case 'jpeg':
-                                imageType = 'jpeg';
-                                break;
-                            case 'png':
-                                imageType = 'png';
-                                break;
-                            case 'gif':
-                                imageType = 'gif';
-                                break;
-                            case 'bmp':
-                                imageType = 'bmp';
-                                break;
-                            case 'webp':
-                                logger.warn(`WebP format not supported for embedding: ${imagePath}`);
-                                currentRow++;
-                                continue;
-                            default:
-                                logger.warn(`Unsupported image format for embedding: ${imagePath}`);
-                                currentRow++;
-                                continue;
-                        }
-                        
-                        const imageId = workbook.addImage({
-                            buffer: imageBuffer,
-                            extension: imageType,
-                        });
-                        
-                        const maxWidth = 300; 
-                        const maxHeight = 200; 
-                        
-                        let imageWidth = maxWidth;
-                        let imageHeight = maxHeight;
-                        
-                        // Place image in the current row (column C, which is index 2)
-                        imageSheet.addImage(imageId, {
-                            tl: { col: 2, row: currentRow - 1 }, // currentRow - 1 because Excel rows are 0-indexed for images
-                            ext: { width: imageWidth, height: imageHeight },
-                            editAs: 'oneCell'
-                        });
-
-                        // Set row height to accommodate the image
-                        const excelRowHeight = Math.max(150, (imageHeight * 0.75)); 
-                        imageSheet.getRow(currentRow).height = excelRowHeight;
-
-                        logger.info(`Embedded image: ${imagePath} in row ${currentRow}`);
-                    } else {
-                        logger.warn(`Image file not found: ${imagePath}`);
-                    }
-                } catch (error) {
-                    logger.error(`Failed to embed image ${imagePath}: ${error.message}`);
-                }
-                
-                currentRow++;
-            }
         }
-    }
-    
-    // Format header row
+    });
+
     const headerRow = imageSheet.getRow(1);
     headerRow.font = { bold: true };
     headerRow.fill = {
@@ -169,7 +134,6 @@ async function addImageProofSheet(workbook, rows, extractedImages) {
         fgColor: { argb: 'FFD3D3D3' }
     };
 
-    // Set default row height
     imageSheet.properties.defaultRowHeight = 100;
 
     return workbook;
@@ -189,7 +153,7 @@ async function downloadFile(filename, rows, extractedImages = []) {
             'vul_id', 'app_id', 'vul_title', 'affected_url', 'risk_rating',
             'affected_parameters', 'description', 'impact',
             'recommendation', 'reference', 'status',
-            'created_on', 'updated_on', 'deleted_on'
+            'created_on', 'updated_on', 'deleted_on', 'img_ref_address'
         ];
 
         const workbook = new ExcelJS.Workbook();
@@ -210,7 +174,8 @@ async function downloadFile(filename, rows, extractedImages = []) {
             { header: 'status', key: 'status', width: 15 },
             { header: 'created_on', key: 'created_on', width: 15 },
             { header: 'updated_on', key: 'updated_on', width: 15 },
-            { header: 'deleted_on', key: 'deleted_on', width: 15 }
+            { header: 'deleted_on', key: 'deleted_on', width: 15 },
+            { header: 'img_ref_address', key: 'img_ref_address', width: 50 }
         ];
 
         // Format header row
@@ -250,10 +215,7 @@ async function downloadFile(filename, rows, extractedImages = []) {
             return processedRow;
         });
 
-        // Log processed rows for debugging
         logger.info(`Processed ${rows.length} rows for Excel file`);
-
-        // Add data validation
         worksheet.addRows(rows);
         for (let i = 2; i < 100000; i++) {
             worksheet.getCell(`C${i}`).dataValidation = {
@@ -267,10 +229,8 @@ async function downloadFile(filename, rows, extractedImages = []) {
         }
         logger.info("Data Validation added");
         addVulnerabilitiesSheet(workbook);
-        logger.info("Vulnerabilities sheet added");
-        
-        // Add image proof sheet
-        addImageProofSheet(workbook, rows, extractedImages);
+        logger.info("Vulnerabilities sheet added");        
+        addImageProofSheet(workbook, rows);
         logger.info("Image proofs sheet added");
 
         await workbook.xlsx.writeFile(xlsxName);
@@ -291,6 +251,111 @@ async function downloadFile(filename, rows, extractedImages = []) {
     } catch (err) {
         logger.error(`Failed to create download files: ${err}`);
         throw new Error(`Failed to create download files: ${err}`);
+    }
+}
+
+function addImageAddress(rows, extractedImages) {
+    try {
+        logger.info(`Adding image addresses to ${rows.length} rows with ${extractedImages.length} images`);
+        
+        // Create a map to store used images to avoid duplicates
+        const usedImages = new Set();
+        
+        const rowsWithImages = rows.map((row, rowIndex) => {
+            const processedRow = { ...row };
+            
+            // Initialize img_ref_address as empty
+            processedRow.img_ref_address = '';
+            
+            const normalizedTitle = row.vul_title
+                .toLowerCase()
+                .replace(/[\s_-]+/g, '') // Remove spaces and underscores
+                .replace(/[^\w]/g, '');  // Remove non-alphanumeric characters
+
+            logger.info(`Processing vulnerability: ID=${row.vul_id}, Title=${row.vul_title}, Normalized Title=${normalizedTitle}`);
+
+            // Strategy 1: Try to match by vulnerability ID
+            let matchingImages = extractedImages.filter(imagePath => {
+                if (usedImages.has(imagePath)) return false;
+                
+                const filename = path.basename(imagePath, path.extname(imagePath))
+                    .toLowerCase()
+                    .replace(/[\s_-]+/g, '')
+                    .replace(/[^\w]/g, '');
+
+                return filename.includes(row.vul_id?.toString() || '');
+            });
+
+            // Strategy 2: If no match by ID, try partial title matching with keywords
+            if (matchingImages.length === 0) {
+                const titleKeywords = extractKeywords(row.vul_title);
+                
+                matchingImages = extractedImages.filter(imagePath => {
+                    if (usedImages.has(imagePath)) return false;
+                    
+                    const filename = path.basename(imagePath, path.extname(imagePath))
+                        .toLowerCase()
+                        .replace(/[\s_-]+/g, '')
+                        .replace(/[^\w]/g, '');
+
+                    // Check if filename contains any of the keywords
+                    return titleKeywords.some(keyword => 
+                        filename.includes(keyword) || 
+                        keyword.includes(filename) // For short filenames
+                    );
+                });
+            }
+
+            // Strategy 3: If still no match, try fuzzy matching based on common vulnerability types
+            if (matchingImages.length === 0) {
+                const vulnType = categorizeVulnerability(row.vul_title);
+                
+                matchingImages = extractedImages.filter(imagePath => {
+                    if (usedImages.has(imagePath)) return false;
+                    
+                    const filename = path.basename(imagePath, path.extname(imagePath))
+                        .toLowerCase();
+
+                    return checkVulnerabilityTypeMatch(filename, vulnType);
+                });
+            }
+
+            // Strategy 4: Sequential assignment for remaining unmatched vulnerabilities
+            if (matchingImages.length === 0) {
+                const availableImages = extractedImages.filter(imagePath => !usedImages.has(imagePath));
+                
+                if (availableImages.length > 0) {
+                    // Assign the first available image
+                    matchingImages = [availableImages[0]];
+                    logger.info(`Sequential assignment: Assigning ${availableImages[0]} to vulnerability ID=${row.vul_id}`);
+                }
+            }
+
+            // Set img_ref_address based on matching images
+            if (matchingImages.length > 0) {
+                // If multiple images found, concatenate them with semicolon separator
+                const imageNames = matchingImages.map(imagePath => path.basename(imagePath));
+                processedRow.img_ref_address = imageNames.join('; ');
+                
+                // Mark images as used
+                matchingImages.forEach(imagePath => {
+                    usedImages.add(imagePath);
+                    logger.info(`Matched image: ${imagePath} for vulnerability ID=${row.vul_id}`);
+                });
+            } else {
+                processedRow.img_ref_address = 'No image available';
+                logger.warn(`No images found for vulnerability ID: ${row.vul_id}, Title: ${row.vul_title}`);
+            }
+
+            return processedRow;
+        });
+
+        logger.info(`Successfully processed image addresses for ${rowsWithImages.length} rows`);
+        return rowsWithImages;
+        
+    } catch (error) {
+        logger.error(`Error in addImageAddress: ${error.message}`);
+        throw error;
     }
 }
 
@@ -368,9 +433,7 @@ async function listFilesRecursive(dir) {
 }
 async function ImageTableOps(imageFiles, rows) {
     try {
-        const imageProofs = [];
-        
-        // Create a map of used images to avoid duplicates
+        const imageProofs = [];        
         const usedImages = new Set();
         
         rows.forEach((row, rowIndex) => {
@@ -405,7 +468,6 @@ async function ImageTableOps(imageFiles, rows) {
                         .replace(/[\s_-]+/g, '')
                         .replace(/[^\w]/g, '');
 
-                    // Check if filename contains any of the keywords
                     return titleKeywords.some(keyword => 
                         filename.includes(keyword) || 
                         keyword.includes(filename) // For short filenames
@@ -413,7 +475,6 @@ async function ImageTableOps(imageFiles, rows) {
                 });
             }
 
-            // Strategy 3: If still no match, try fuzzy matching based on common vulnerability types
             if (matchingImages.length === 0) {
                 const vulnType = categorizeVulnerability(row.vul_title);
                 
@@ -426,23 +487,18 @@ async function ImageTableOps(imageFiles, rows) {
                     return checkVulnerabilityTypeMatch(filename, vulnType);
                 });
             }
-
-            // Strategy 4: Sequential assignment for remaining unmatched vulnerabilities
-            if (matchingImages.length === 0) {
+           if (matchingImages.length === 0) {
                 const availableImages = imageFiles.filter(imagePath => !usedImages.has(imagePath));
                 
                 if (availableImages.length > 0) {
-                    // Assign the first available image
                     matchingImages = [availableImages[0]];
                     logger.info(`Sequential assignment: Assigning ${availableImages[0]} to vulnerability ID=${row.vul_id}`);
                 }
             }
-
-            // Only insert if we have matching images
             if (matchingImages.length > 0) {
                 matchingImages.forEach(imagePath => {
                     logger.info(`Matched image: ${imagePath} for vulnerability ID=${row.vul_id}`);
-                    usedImages.add(imagePath); // Mark as used
+                    usedImages.add(imagePath);
                     imageProofs.push([
                         row.vul_id,
                         imagePath,
@@ -450,18 +506,15 @@ async function ImageTableOps(imageFiles, rows) {
                     ]);
                 });
             } else {
-                // Just log the warning, don't insert anything
                 logger.warn(`No images found for vulnerability ID: ${row.vul_id}, Title: ${row.vul_title} - Skipping database insertion`);
             }
         });
 
-        // Check if we have any image proofs to insert
         if (imageProofs.length === 0) {
             logger.warn('No matching images found for any vulnerabilities - No database insertions will be made');
-            return; // Exit early if no matches found
+            return;
         }
 
-        // Database insertion logic remains the same
         const transaction = await sequelize.transaction();
         try {
             const BATCH_SIZE = 100;
@@ -497,12 +550,10 @@ async function ImageTableOps(imageFiles, rows) {
     }
 }
 
-// Helper function to extract meaningful keywords from vulnerability titles
 function extractKeywords(title) {
     const keywords = [];
     const normalizedTitle = title.toLowerCase();
     
-    // Extract common vulnerability keywords
     const vulnKeywords = [
         'xss', 'sql', 'injection', 'csrf', 'sqli', 'rce', 'lfi', 'rfi', 
         'xxe', 'ssrf', 'idor', 'bac', 'auth', 'bypass', 'upload', 'directory',
@@ -515,7 +566,6 @@ function extractKeywords(title) {
         }
     });
     
-    // Extract acronyms (words in parentheses)
     const acronymMatch = title.match(/\(([^)]+)\)/g);
     if (acronymMatch) {
         acronymMatch.forEach(match => {
@@ -524,12 +574,11 @@ function extractKeywords(title) {
         });
     }
     
-    // If no specific keywords found, use significant words from title
     if (keywords.length === 0) {
         const words = normalizedTitle
             .replace(/[^\w\s]/g, '')
             .split(/\s+/)
-            .filter(word => word.length > 3) // Only words longer than 3 characters
+            .filter(word => word.length > 3) 
             .slice(0, 3); // Take first 3 significant words
         
         keywords.push(...words);
@@ -608,5 +657,6 @@ module.exports = {
     processZIPOrRAR,
     listFilesRecursive,
     ImageTableOps,
-    convertToOds
+    convertToOds,
+    addImageAddress,
 }

@@ -15,7 +15,8 @@ const {
     processZIPOrRAR,
     listFilesRecursive,
     ImageTableOps,
-    convertToOds
+    convertToOds,
+    addImageAddress
 } = require('../utils/file.js');
 
 const logger = winston.createLogger({
@@ -147,6 +148,7 @@ router.post('/submit', upload.fields([
             throw new Error(`Database error: ${err.message}`);
         }
         const colFromDBNames = colFromDB.map(col => col.Field);
+        colFromDBNames.push('img_ref_address'); 
         const spreadsheetCols = Object.keys(jsonData[0]);
 
         const invalidCols = spreadsheetCols.filter(col => !colFromDBNames.includes(col));
@@ -182,6 +184,7 @@ router.post('/submit', upload.fields([
                     case 'created_on': width = 15; break;
                     case 'updated_on': width = 15; break;
                     case 'deleted_on': width = 15; break;
+                    case 'img_ref_address': width = 50; break; // Add this case
                     default: width = 15;
                 }
                 return { header: col, key: col, width };
@@ -234,10 +237,20 @@ router.post('/submit', upload.fields([
                     case 'created_on':
                         sampleRowData[col] = new Date();
                         break;
+                    case 'img_ref_address':
+                        sampleRowData[col] = 'screenshot1.png; screenshot2.png';
+                        break;
                     default:
                         sampleRowData[col] = '';
                 }
             });
+
+            headerRow.font = { bold: true };
+            headerRow.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFD3D3D3' }
+            };
             logger.log('info', `${vulnerabilities}`)
             templateSheet.addRow(sampleRowData);
             const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
@@ -253,7 +266,7 @@ router.post('/submit', upload.fields([
                 }
             }
             addVulnerabilitiesSheet(templateWorkbook);
-            addImageProofSheet(templateWorkbook, [],extractedImageFiles);
+            addImageProofSheet(templateWorkbook, [], extractedImageFiles);
             await templateWorkbook.xlsx.writeFile(newFilePath);
 
             return res.status(400).send(
@@ -267,7 +280,7 @@ router.post('/submit', upload.fields([
         jsonData.forEach((row, index) => {
             const rowNum = index + 2;
             const errors = [];
-
+            logger.log('info', `Processing row ${rowNum}: ${JSON.stringify(row)}`);
             if (!row.app_id) errors.push('Missing app_id');
             if (!row.vul_title) errors.push('Missing vul_title');
             if (!row.description) errors.push('Missing description');
@@ -302,19 +315,27 @@ router.post('/submit', upload.fields([
             if (rowsToInsert.length === 0) {
                 return res.status(400).send('No valid data found to import.');
             }
-
             try {
+                rowsToInsert = addImageAddress(rowsToInsert, extractedImageFiles);
+                logger.info('Image addresses added to rows');
+
                 const result = await downloadFile(reportName, rowsToInsert, extractedImageFiles);
                 await batchInsert(rowsToInsert);
-                await ImageTableOps(extractedImageFiles, rowsToInsert)
+                await ImageTableOps(extractedImageFiles, rowsToInsert);
                 logger.log('info', `Rows inserted: ${rowsToInsert.length}`);
 
+                const colHeaders = rowsToInsert.length > 0 ? Object.keys(rowsToInsert[0]) : [];
+
+                if (!colHeaders.includes('img_ref_address')) {
+                    colHeaders.push('img_ref_address');
+                }
                 res.render('preview', {
                     rows: rowsToInsert,
                     totalRows: validRows,
                     filename: reportPath,
                     downloadName: result.downloadNameOds,
-                    imageFiles: extractedImageFiles
+                    imageFiles: extractedImageFiles,
+                    colHeaders
                 });
             } catch (error) {
                 logger.log('error', `443 - ${error}`)
@@ -324,30 +345,31 @@ router.post('/submit', upload.fields([
             return res.status(400).send('No valid data found to import.');
         }
 
+
     } catch (err) {
         logger.log('error', `451 ${err}`)
         return res.status(500).send(`Error processing file: ${err.message}`);
-    } finally {
-        const toDelete = [];
+    // } finally {
+    //     const toDelete = [];
 
-        if (reportPath) toDelete.push(reportPath);
-        if (typeof renamedZip === 'string') {
-            toDelete.push(renamedZip);
-        } else if (zipPath) {
-            toDelete.push(zipPath);
-        }
+    //     if (reportPath) toDelete.push(reportPath);
+    //     if (typeof renamedZip === 'string') {
+    //         toDelete.push(renamedZip);
+    //     } else if (zipPath) {
+    //         toDelete.push(zipPath);
+    //     }
 
-        extractedImageFiles.forEach(file => toDelete.push(file));
+    //     extractedImageFiles.forEach(file => toDelete.push(file));
 
-        toDelete.forEach(p => {
-            fs.unlink(p, err => {
-                if (err && err.code !== 'ENOENT') {
-                    console.error('Failed to delete temp file', p, err);
-                }
-            });
-        });
+    //     toDelete.forEach(p => {
+    //         fs.unlink(p, err => {
+    //             if (err && err.code !== 'ENOENT') {
+    //                 console.error('Failed to delete temp file', p, err);
+    //             }
+    //         });
+    //     });
+    // }
     }
-
 });
 
 async function batchInsert(rows) {
@@ -498,7 +520,7 @@ router.get('/download/:filename', (req, res) => {
 
 router.get('/preview', async (req, res) => {
     try {
-        let { filename, rows, totalRows, downloadNameOds } = req.body || req.query;
+        let { filename, rows, totalRows, downloadNameOds, colHeaders, imageFiles } = req.body || req.query;
 
         if (!filename || !rows) {
             return res.status(400).send('Missing filename or rows in request.');
@@ -518,10 +540,48 @@ router.get('/preview', async (req, res) => {
             totalRows,
             filename,
             downloadName: downloadNameOds,
+            colHeaders: colHeaders,
+            imageFiles: imageFiles || []
         });
     } catch (err) {
         logger.error(`578 - ${err}`);
         res.status(500).send(`Preview generation failed: ${err.message}`);
     }
 });
+router.get('/image/preview/:filename', async (req, res) => {
+    const filename = req.params.filename;
+    const sanitizedFilename = path.basename(filename);
+
+    async function findFiles(dir, target) {
+        let results = [];
+        const filesAndDirs = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const entry of filesAndDirs) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                const subResults = await findFiles(fullPath, target);
+                results = results.concat(subResults);
+            } else if (entry.isFile() && entry.name === target) {
+                const stats = await fs.promises.stat(fullPath);
+                results.push({ path: fullPath, mtime: stats.mtime });
+            }
+        }
+        return results;
+    }
+
+    try {
+        const foundFiles = await findFiles(UPLOADS_DIR, sanitizedFilename);
+        if (!foundFiles.length) {
+            logger.log('warn', `Image file not found: ${sanitizedFilename} in uploads folder`);
+            return res.status(404).send('Image file not found');
+        }
+        foundFiles.sort((a, b) => b.mtime - a.mtime);
+        const recentFile = foundFiles[0].path;
+        logger.log('info', `Found image file: ${recentFile}`);
+        return res.sendFile(recentFile);
+    } catch (error) {
+        logger.error(`Error searching image file: ${error.message}`);
+        return res.status(500).send('Error processing request');
+    }
+});
+
 module.exports = router;
