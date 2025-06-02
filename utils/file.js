@@ -62,6 +62,35 @@ function addVulnerabilitiesSheet(workbook) {
 }
 
 async function addImageProofSheet(workbook, rows) {
+    function findImageFile(imagePath) {
+        if (fs.existsSync(imagePath)) return imagePath;
+        const dir = path.dirname(imagePath);
+        const targetName = path.basename(imagePath).toLowerCase();
+
+        function searchDirectory(directory) {
+            try {
+                const entries = fs.readdirSync(directory, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = path.join(directory, entry.name);
+                    if (entry.isFile() && entry.name.toLowerCase() === targetName) {
+                        logger.log('info', `Found matching image using recursive search: ${fullPath}`);
+                        return fullPath;
+                    } else if (entry.isDirectory()) {
+                        const found = searchDirectory(fullPath);
+                        if (found) {
+                            return found;
+                        }
+                    }
+                }
+            } catch (e) {
+                logger.warn(`Error accessing directory ${directory}: ${e.message}`);
+            }
+            return null;
+        }
+
+        return searchDirectory(dir);
+    }
+
     const imageSheet = workbook.addWorksheet('Image Proofs');
     imageSheet.columns = [
         { header: 'Vulnerability ID', key: 'vul_id', width: 15 },
@@ -69,60 +98,71 @@ async function addImageProofSheet(workbook, rows) {
         { header: 'Image Preview', key: 'image_preview', width: 40 }
     ];
 
-    rows.forEach((row, index) => {
-        const imgRefAddress = row.img_ref_address || '';
-        const imagePaths = imgRefAddress.split(';').map(path => path.trim());
-        let imageFound = false;
+    // Process each vulnerability row and add one row per vulnerability:
+    rows.forEach((row) => {
+        const imgRefAddress = row.img_ref_address ? row.img_ref_address.trim() : '';
+        // Obtain an array of raw image paths
+        const rawPaths = imgRefAddress.includes(';')
+            ? imgRefAddress.split(';').map(p => p.trim()).filter(p => p)
+            : (imgRefAddress ? [imgRefAddress] : []);
 
-        imagePaths.forEach((imagePath) => {
-            if (imagePath && fs.existsSync(imagePath)) {
-                imageFound = true;
-                const imageBuffer = fs.readFileSync(imagePath);
-                const imageExtension = path.extname(imagePath).toLowerCase().substring(1);
-
-                let imageType;
-                switch (imageExtension) {
-                    case 'jpg':
-                    case 'jpeg':
-                        imageType = 'jpeg';
-                        break;
-                    case 'png':
-                        imageType = 'png';
-                        break;
-                    case 'gif':
-                        imageType = 'gif';
-                        break;
-                    case 'bmp':
-                        imageType = 'bmp';
-                        break;
-                    default:
-                        imageType = null;
-                }
-
-                if (imageType) {
-                    const imageId = workbook.addImage({
-                        buffer: imageBuffer,
-                        extension: imageType,
-                    });
-
-                    const rowIndex = index + 2; // Account for header row
-                    imageSheet.addImage(imageId, {
-                        tl: { col: 2, row: rowIndex - 1 },
-                        ext: { width: 300, height: 200 },
-                        editAs: 'oneCell',
-                    });
-
-                    imageSheet.getRow(rowIndex).height = 150; // Adjust row height for the image
-                }
+        // Try to locate files for each image reference
+        const foundImages = [];
+        rawPaths.forEach((rawPath) => {
+            const imagePath = findImageFile(rawPath);
+            if (imagePath) {
+                foundImages.push(imagePath);
             }
         });
 
-        if (!imageFound) {
-            imageSheet.addRow({
-                vul_id: row.vul_id,
-                image_path: imgRefAddress || 'No image available',
-                image_preview: '404 Not Found',
-            });
+        // Add a single row where vulnerability id, image addresses and preview are aligned
+        const newRow = imageSheet.addRow({
+            vul_id: row.vul_id,
+            image_path: foundImages.length > 0 ? foundImages.join('; ') : (imgRefAddress || 'No image available'),
+            image_preview: ''
+        });
+        const rowIndex = newRow.number;
+
+        // If at least one valid image was found, add its preview in the same row
+        if (foundImages.length > 0) {
+            const imageBuffer = fs.readFileSync(foundImages[0]);
+            const imageExtension = path.extname(foundImages[0]).toLowerCase().substring(1);
+            let imageType;
+            switch (imageExtension) {
+                case 'jpg':
+                case 'jpeg':
+                    imageType = 'jpeg';
+                    break;
+                case 'png':
+                    imageType = 'png';
+                    break;
+                case 'gif':
+                    imageType = 'gif';
+                    break;
+                case 'bmp':
+                    imageType = 'bmp';
+                    break;
+                default:
+                    imageType = null;
+            }
+
+            if (imageType) {
+                const imageId = workbook.addImage({
+                    buffer: imageBuffer,
+                    extension: imageType,
+                });
+                imageSheet.addImage(imageId, {
+                    tl: { col: 2, row: rowIndex - 1 },
+                    ext: { width: 300, height: 200 },
+                    editAs: 'oneCell',
+                });
+                imageSheet.getRow(rowIndex).height = 150;
+            } else {
+                logger.warn(`Unsupported image type for file: ${foundImages[0]}`);
+                newRow.getCell(3).value = '404 Not Found';
+            }
+        } else {
+            newRow.getCell(3).value = '404 Not Found';
         }
     });
 
