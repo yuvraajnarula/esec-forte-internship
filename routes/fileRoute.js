@@ -148,7 +148,7 @@ router.post('/submit', upload.fields([
             throw new Error(`Database error: ${err.message}`);
         }
         const colFromDBNames = colFromDB.map(col => col.Field);
-        colFromDBNames.push('img_ref_address'); 
+        colFromDBNames.push('img_ref_address');
         const spreadsheetCols = Object.keys(jsonData[0]);
 
         const invalidCols = spreadsheetCols.filter(col => !colFromDBNames.includes(col));
@@ -205,7 +205,7 @@ router.post('/submit', upload.fields([
                         sampleRowData[col] = 'Auto-generated';
                         break;
                     case 'app_id':
-                        sampleRowData[col] = 1;
+                        sampleRowData[col] = 2;
                         break;
                     case 'vul_title':
                         sampleRowData[col] = 'Cross-Site Scripting (XSS)';
@@ -264,7 +264,10 @@ router.post('/submit', upload.fields([
                     errorTitle: 'Invalid Option',
                     error: 'Please select a valid vulnerability.'
                 }
-            }
+        templateSheet.getCell(`A${i}`).value = {
+            formula: `=IF(ISBLANK(C${i}),"",INDEX(Vulnerabilities!A:A,MATCH(C${i},Vulnerabilities!B:B,0)))`
+        };
+                    }
             addVulnerabilitiesSheet(templateWorkbook);
             addImageProofSheet(templateWorkbook, [], extractedImageFiles);
             await templateWorkbook.xlsx.writeFile(newFilePath);
@@ -349,26 +352,6 @@ router.post('/submit', upload.fields([
     } catch (err) {
         logger.log('error', `451 ${err}`)
         return res.status(500).send(`Error processing file: ${err.message}`);
-    // } finally {
-    //     const toDelete = [];
-
-    //     if (reportPath) toDelete.push(reportPath);
-    //     if (typeof renamedZip === 'string') {
-    //         toDelete.push(renamedZip);
-    //     } else if (zipPath) {
-    //         toDelete.push(zipPath);
-    //     }
-
-    //     extractedImageFiles.forEach(file => toDelete.push(file));
-
-    //     toDelete.forEach(p => {
-    //         fs.unlink(p, err => {
-    //             if (err && err.code !== 'ENOENT') {
-    //                 console.error('Failed to delete temp file', p, err);
-    //             }
-    //         });
-    //     });
-    // }
     }
 });
 

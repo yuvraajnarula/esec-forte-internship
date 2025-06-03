@@ -1,70 +1,270 @@
+<style>
+  .upload-container {
+    max-width: 800px;
+    margin: 1rem auto;
+    padding: 2rem;
+    background: #f9f9f9;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    text-align: center;
+  }
+
+  .upload-container h1 {
+    margin-bottom: 1.5rem;
+    font-size: 1.8rem;
+    color: #333;
+  }
+
+  .info-btn {
+    float: right;
+    background: #007bff;
+    border: none;
+    border-radius: 50%;
+    color: white;
+    width: 32px;
+    height: 32px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-bottom: 1rem;
+  }
+
+  .file-label {
+    display: block;
+    margin-top: 1.2rem;
+    font-weight: 600;
+    color: #333;
+  }
+
+  .file-name {
+    margin-top: 0.5rem;
+    font-size: 0.9rem;
+    color: #555;
+  }
+
+  .button {
+    margin-top: 2rem;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    font-size: 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s;
+  }
+
+  .button:hover {
+    background-color: #0056b3;
+  }
+
+  .drag-box {
+    margin: 1rem 0;
+    padding: 2rem;
+    border: 2px dashed #aaa;
+    border-radius: 8px;
+    background: #fff;
+    transition: border-color 0.3s;
+    cursor: pointer;
+  }
+
+  .drag-box.dragover {
+    border-color: #007bff;
+    background-color: #eef6ff;
+  }
+
+  input[type="file"] {
+    display: none;
+  }
+
+  /* Modal styling */
+  .modal-div.hidden {
+    display: none;
+  }
+
+  .modal-div {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .modal {
+    background: white;
+    padding: 2rem;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .close-btn {
+    cursor: pointer;
+  }
+
+  .dropdown {
+    background: #f1f1f1;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-top: 1rem;
+    font-weight: bold;
+  }
+
+  .dropdown-content {
+    margin-top: 0.5rem;
+    max-height: 150px;
+    overflow-y: auto;
+    text-align: left;
+  }
+
+  code {
+    background: #f1f1f1;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+  }
+
+  #error-banner {
+    display: none;
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+    border-radius: 6px;
+    text-align: left;
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+</style>
+
+<!-- Modal -->
 <div class="modal-div hidden">
   <div class="modal">
     <div class="modal-header">
-      <h3>
-        Information
-      </h3>
-      <img src="close-button.svg" width="20" height="20" class="close-btn">
+      <h3>Information</h3>
+      <span class="close-btn" style="font-size: 20px; font-weight: bold;">&times;</span>
     </div>
     <div class="modal-content">
       <p>
-        These are the 30 issues that we take into account in this format. Here is a file in <a href="/file/download/template_vulnerabilities.xlsx">downloadable format.</a>
-        <br>
-        Format for images name convention  <br>
-        <code>
-          Format: {vulnerability_id}_{description}.{extension}
-        </code>
+        These are the 30 issues that we take into account in this format. Here is a file in
+        <a href="/file/download/template_vulnerabilities.xlsx">downloadable format</a>.
+        <br><br>
+        Format for images name convention:<br>
+        <code>Format: {vulnerability_id}_{description}.{extension}</code>
       </p>
-      <button class="dropdown">
-        List of Issues
-      </button>
+      <button class="dropdown">List of Issues</button>
       <div class="dropdown-content">
-        <% vulnerabilities.forEach(vulnerability=>{ %>
-          <span>
-            <%= vulnerability %>
-          </span><br>
-        <% }) %>
+        <span>Sample vulnerability 1</span><br>
+        <span>Sample vulnerability 2</span><br>
+        <span>Sample vulnerability 3</span><br>
       </div>
     </div>
   </div>
 </div>
+
+<!-- Loading Spinner -->
+<div id="loading-spinner" style="
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(255,255,255,0.7);
+  justify-content: center;
+  align-items: center;
+">
+  <div style="
+    width: 3rem;
+    height: 3rem;
+    border: 5px solid #ccc;
+    border-top: 5px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  "></div>
+</div>
+
+<!-- Upload UI -->
 <div class="upload-container">
-  <button
-    class="info-btn"
-  >
-    i
-  </button>
+  <button class="info-btn">i</button>
   <h1>Submit your report here</h1>
+
+  <!-- Error Banner -->
+  <div id="error-banner"></div>
+
   <form action="/file/submit" method="POST" enctype="multipart/form-data">
-    <label for="report-file" class="file-label">Upload audit report</label>
+    <!-- Report File Upload -->
+    <label for="report-file" class="file-label">Upload audit report (.xlsx/.ods)</label>
+    <div class="drag-box" id="drag-report">Drag & Drop or Click to Upload</div>
     <input type="file" id="report-file" name="file" accept=".xlsx,.ods" required />
     <div class="file-name" id="file-name">No file chosen</div>
-    <label for="reference-zip" class="file-label">Upload image reference zip</label>
+
+    <!-- Reference Zip Upload -->
+    <label for="reference-zip" class="file-label">Upload image reference zip (.zip/.rar)</label>
+    <div class="drag-box" id="drag-zip">Drag & Drop or Click to Upload</div>
     <input type="file" id="reference-zip" name="referenceZip" accept=".zip,.rar" required />
     <div class="file-name" id="zip-file-name">No file chosen</div>
+
     <button class="button" type="submit">Submit</button>
   </form>
 </div>
+
 <script>
-  // Report file logic
-  const fileInput = document.getElementById('report-file');
-  const fileNameDiv = document.getElementById('file-name');
-
-  fileInput.addEventListener('change', () => {
-    const name = fileInput.files.length ? fileInput.files[0].name : 'No file chosen';
-    updateFileNameDisplay(fileNameDiv, name, fileInput.files.length);
-  });
-
-  // Zip file logic
+  const dragReport = document.getElementById('drag-report');
+  const dragZip = document.getElementById('drag-zip');
+  const reportInput = document.getElementById('report-file');
   const zipInput = document.getElementById('reference-zip');
-  const zipFileNameDiv = document.getElementById('zip-file-name');
+  const reportNameDiv = document.getElementById('file-name');
+  const zipNameDiv = document.getElementById('zip-file-name');
+  const errorBanner = document.getElementById('error-banner');
 
-  zipInput.addEventListener('change', () => {
-    const name = zipInput.files.length ? zipInput.files[0].name : 'No file chosen';
-    updateFileNameDisplay(zipFileNameDiv, name, zipInput.files.length);
+  // Modal logic
+  document.querySelector('.close-btn').addEventListener('click', () => {
+    document.querySelector('.modal-div').classList.add('hidden');
+  });
+  document.querySelector('.info-btn').addEventListener('click', () => {
+    document.querySelector('.modal-div').classList.remove('hidden');
   });
 
-  // Shared style logic
+  // Drag & Drop Setup
+  function initDragAndDrop(box, input, labelDiv) {
+    box.addEventListener('click', () => input.click());
+
+    box.addEventListener('dragover', e => {
+      e.preventDefault();
+      box.classList.add('dragover');
+    });
+
+    box.addEventListener('dragleave', () => box.classList.remove('dragover'));
+
+    box.addEventListener('drop', e => {
+      e.preventDefault();
+      box.classList.remove('dragover');
+      input.files = e.dataTransfer.files;
+      updateFileNameDisplay(labelDiv, input.files[0].name, true);
+    });
+
+    input.addEventListener('change', () => {
+      const name = input.files.length ? input.files[0].name : 'No file chosen';
+      updateFileNameDisplay(labelDiv, name, input.files.length);
+    });
+  }
+
   function updateFileNameDisplay(element, name, hasFile) {
     element.textContent = name;
     element.style.visibility = hasFile ? 'visible' : 'hidden';
@@ -78,12 +278,58 @@
     element.style.background = hasFile ? 'linear-gradient(to top, #f9f9f9, #e3e3e3)' : 'none';
   }
 
-  // Modal logic
-  document.querySelector('.close-btn').addEventListener('click', () => {
-    document.querySelector('.modal-div').classList.add('hidden');
-  });
+  initDragAndDrop(dragReport, reportInput, reportNameDiv);
+  initDragAndDrop(dragZip, zipInput, zipNameDiv);
 
-  document.querySelector('.info-btn').addEventListener('click', () => {
-    document.querySelector('.modal-div').classList.remove('hidden');
+  // Helper function to get file extension
+  function getFileExtension(filename) {
+    return filename.split('.').pop().toLowerCase();
+  }
+
+  // Improved File Type Validation + Loading Spinner
+  document.querySelector('form').addEventListener('submit', function (e) {
+    const reportFile = reportInput.files[0];
+    const zipFile = zipInput.files[0];
+
+    // Check if files are selected
+    if (!reportFile) {
+      e.preventDefault();
+      errorBanner.textContent = '❌ Please select an audit report file.';
+      errorBanner.style.display = 'block';
+      return;
+    }
+
+    if (!zipFile) {
+      e.preventDefault();
+      errorBanner.textContent = '❌ Please select an image reference zip file.';
+      errorBanner.style.display = 'block';
+      return;
+    }
+
+    // Validate report file by extension
+    const reportExtension = getFileExtension(reportFile.name);
+    const allowedReportExtensions = ['xlsx', 'ods'];
+    
+    if (!allowedReportExtensions.includes(reportExtension)) {
+      e.preventDefault();
+      errorBanner.textContent = '❌ Please upload a valid .xlsx or .ods report file.';
+      errorBanner.style.display = 'block';
+      return;
+    }
+
+    // Validate zip file by extension
+    const zipExtension = getFileExtension(zipFile.name);
+    const allowedZipExtensions = ['zip', 'rar'];
+    
+    if (!allowedZipExtensions.includes(zipExtension)) {
+      e.preventDefault();
+      errorBanner.textContent = '❌ Please upload a valid .zip or .rar image reference file.';
+      errorBanner.style.display = 'block';
+      return;
+    }
+
+    // Hide error banner and show loading spinner if validation passes
+    errorBanner.style.display = 'none';
+    document.getElementById('loading-spinner').style.display = 'flex';
   });
 </script>

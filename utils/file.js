@@ -227,49 +227,29 @@ async function downloadFile(filename, rows, extractedImages = []) {
             fgColor: { argb: 'FFD3D3D3' }
         };
 
-        const formulaRef = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
+        const formulaRefVulnTitle = `Vulnerabilities!$B$2:$B$${vulnerabilities.length + 1}`;
+        const formulaRefVulnID = `Vulnerabilities!$A$2:$A$${vulnerabilities.length + 1}`;
 
-        // Process references: convert all complex reference objects to simple strings
-        rows = rows.map(r => {
-            // Create a new object to avoid mutation problems
-            const processedRow = { ...r };
-
-            // Process reference field specifically
-            if (processedRow.reference) {
-                if (typeof processedRow.reference === 'object') {
-                    if (processedRow.reference.hyperlink) {
-                        processedRow.reference = processedRow.reference.hyperlink;
-                    } else if (processedRow.reference.text) {
-                        processedRow.reference = processedRow.reference.text;
-                    } else {
-                        try {
-                            processedRow.reference = JSON.stringify(processedRow.reference);
-                        } catch (e) {
-                            processedRow.reference = null;
-                            logger.warn(`Could not process reference for row with title: ${processedRow.vul_title}`);
-                        }
-                    }
-                }
-            }
-
-            return processedRow;
-        });
-
-        logger.info(`Processed ${rows.length} rows for Excel file`);
-        worksheet.addRows(rows);
+        // Add data validation for vulnerability title column
         for (let i = 2; i < 100000; i++) {
             worksheet.getCell(`C${i}`).dataValidation = {
                 type: 'list',
                 allowBlank: true,
-                formulae: [formulaRef],
+                formulae: [formulaRefVulnTitle],
                 showErrorMessage: true,
                 errorTitle: 'Invalid Option',
-                error: 'Please select a valid vulnerability.'
-            }
+                error: 'Please select a valid vulnerability title.'
+            };
+
+            worksheet.getCell(`A${i}`).value = {
+                formula: `=IF(ISBLANK(C${i}),"",INDEX($Vulnerabilities.A:A,MATCH(TEXT(C${i},"0"),TEXT($Vulnerabilities.B:B,"0"),0)))`
+            };
         }
-        logger.info("Data Validation added");
+
+        logger.info("Data Validation and VLOOKUP added for vulnerability title and ID columns");
+
         addVulnerabilitiesSheet(workbook);
-        logger.info("Vulnerabilities sheet added");        
+        logger.info("Vulnerabilities sheet added");
         addImageProofSheet(workbook, rows);
         logger.info("Image proofs sheet added");
 
@@ -297,16 +277,16 @@ async function downloadFile(filename, rows, extractedImages = []) {
 function addImageAddress(rows, extractedImages) {
     try {
         logger.info(`Adding image addresses to ${rows.length} rows with ${extractedImages.length} images`);
-        
+
         // Create a map to store used images to avoid duplicates
         const usedImages = new Set();
-        
+
         const rowsWithImages = rows.map((row, rowIndex) => {
             const processedRow = { ...row };
-            
+
             // Initialize img_ref_address as empty
             processedRow.img_ref_address = '';
-            
+
             const normalizedTitle = row.vul_title
                 .toLowerCase()
                 .replace(/[\s_-]+/g, '') // Remove spaces and underscores
@@ -317,7 +297,7 @@ function addImageAddress(rows, extractedImages) {
             // Strategy 1: Try to match by vulnerability ID
             let matchingImages = extractedImages.filter(imagePath => {
                 if (usedImages.has(imagePath)) return false;
-                
+
                 const filename = path.basename(imagePath, path.extname(imagePath))
                     .toLowerCase()
                     .replace(/[\s_-]+/g, '')
@@ -329,18 +309,18 @@ function addImageAddress(rows, extractedImages) {
             // Strategy 2: If no match by ID, try partial title matching with keywords
             if (matchingImages.length === 0) {
                 const titleKeywords = extractKeywords(row.vul_title);
-                
+
                 matchingImages = extractedImages.filter(imagePath => {
                     if (usedImages.has(imagePath)) return false;
-                    
+
                     const filename = path.basename(imagePath, path.extname(imagePath))
                         .toLowerCase()
                         .replace(/[\s_-]+/g, '')
                         .replace(/[^\w]/g, '');
 
                     // Check if filename contains any of the keywords
-                    return titleKeywords.some(keyword => 
-                        filename.includes(keyword) || 
+                    return titleKeywords.some(keyword =>
+                        filename.includes(keyword) ||
                         keyword.includes(filename) // For short filenames
                     );
                 });
@@ -349,10 +329,10 @@ function addImageAddress(rows, extractedImages) {
             // Strategy 3: If still no match, try fuzzy matching based on common vulnerability types
             if (matchingImages.length === 0) {
                 const vulnType = categorizeVulnerability(row.vul_title);
-                
+
                 matchingImages = extractedImages.filter(imagePath => {
                     if (usedImages.has(imagePath)) return false;
-                    
+
                     const filename = path.basename(imagePath, path.extname(imagePath))
                         .toLowerCase();
 
@@ -363,7 +343,7 @@ function addImageAddress(rows, extractedImages) {
             // Strategy 4: Sequential assignment for remaining unmatched vulnerabilities
             if (matchingImages.length === 0) {
                 const availableImages = extractedImages.filter(imagePath => !usedImages.has(imagePath));
-                
+
                 if (availableImages.length > 0) {
                     // Assign the first available image
                     matchingImages = [availableImages[0]];
@@ -376,7 +356,7 @@ function addImageAddress(rows, extractedImages) {
                 // If multiple images found, concatenate them with semicolon separator
                 const imageNames = matchingImages.map(imagePath => path.basename(imagePath));
                 processedRow.img_ref_address = imageNames.join('; ');
-                
+
                 // Mark images as used
                 matchingImages.forEach(imagePath => {
                     usedImages.add(imagePath);
@@ -392,7 +372,7 @@ function addImageAddress(rows, extractedImages) {
 
         logger.info(`Successfully processed image addresses for ${rowsWithImages.length} rows`);
         return rowsWithImages;
-        
+
     } catch (error) {
         logger.error(`Error in addImageAddress: ${error.message}`);
         throw error;
@@ -414,7 +394,7 @@ function isValidImage(filePath) {
 async function processZIPOrRAR(filepath) {
     try {
         const ext = path.extname(filepath).toLowerCase();
-        logger.log('info',`Processing file with extension: ${ext}`);
+        logger.log('info', `Processing file with extension: ${ext}`);
 
         if (ext === '.zip') {
             const extract = require('extract-zip');
@@ -473,9 +453,9 @@ async function listFilesRecursive(dir) {
 }
 async function ImageTableOps(imageFiles, rows) {
     try {
-        const imageProofs = [];        
+        const imageProofs = [];
         const usedImages = new Set();
-        
+
         rows.forEach((row, rowIndex) => {
             const normalizedTitle = row.vul_title
                 .toLowerCase()
@@ -487,7 +467,7 @@ async function ImageTableOps(imageFiles, rows) {
             // Strategy 1: Try to match by vulnerability ID
             let matchingImages = imageFiles.filter(imagePath => {
                 if (usedImages.has(imagePath)) return false;
-                
+
                 const filename = path.basename(imagePath, path.extname(imagePath))
                     .toLowerCase()
                     .replace(/[\s_-]+/g, '')
@@ -499,17 +479,17 @@ async function ImageTableOps(imageFiles, rows) {
             // Strategy 2: If no match by ID, try partial title matching with keywords
             if (matchingImages.length === 0) {
                 const titleKeywords = extractKeywords(row.vul_title);
-                
+
                 matchingImages = imageFiles.filter(imagePath => {
                     if (usedImages.has(imagePath)) return false;
-                    
+
                     const filename = path.basename(imagePath, path.extname(imagePath))
                         .toLowerCase()
                         .replace(/[\s_-]+/g, '')
                         .replace(/[^\w]/g, '');
 
-                    return titleKeywords.some(keyword => 
-                        filename.includes(keyword) || 
+                    return titleKeywords.some(keyword =>
+                        filename.includes(keyword) ||
                         keyword.includes(filename) // For short filenames
                     );
                 });
@@ -517,19 +497,19 @@ async function ImageTableOps(imageFiles, rows) {
 
             if (matchingImages.length === 0) {
                 const vulnType = categorizeVulnerability(row.vul_title);
-                
+
                 matchingImages = imageFiles.filter(imagePath => {
                     if (usedImages.has(imagePath)) return false;
-                    
+
                     const filename = path.basename(imagePath, path.extname(imagePath))
                         .toLowerCase();
 
                     return checkVulnerabilityTypeMatch(filename, vulnType);
                 });
             }
-           if (matchingImages.length === 0) {
+            if (matchingImages.length === 0) {
                 const availableImages = imageFiles.filter(imagePath => !usedImages.has(imagePath));
-                
+
                 if (availableImages.length > 0) {
                     matchingImages = [availableImages[0]];
                     logger.info(`Sequential assignment: Assigning ${availableImages[0]} to vulnerability ID=${row.vul_id}`);
@@ -593,19 +573,19 @@ async function ImageTableOps(imageFiles, rows) {
 function extractKeywords(title) {
     const keywords = [];
     const normalizedTitle = title.toLowerCase();
-    
+
     const vulnKeywords = [
-        'xss', 'sql', 'injection', 'csrf', 'sqli', 'rce', 'lfi', 'rfi', 
+        'xss', 'sql', 'injection', 'csrf', 'sqli', 'rce', 'lfi', 'rfi',
         'xxe', 'ssrf', 'idor', 'bac', 'auth', 'bypass', 'upload', 'directory',
         'traversal', 'disclosure', 'leak', 'exposure', 'misconfiguration'
     ];
-    
+
     vulnKeywords.forEach(keyword => {
         if (normalizedTitle.includes(keyword)) {
             keywords.push(keyword);
         }
     });
-    
+
     const acronymMatch = title.match(/\(([^)]+)\)/g);
     if (acronymMatch) {
         acronymMatch.forEach(match => {
@@ -613,22 +593,22 @@ function extractKeywords(title) {
             keywords.push(acronym);
         });
     }
-    
+
     if (keywords.length === 0) {
         const words = normalizedTitle
             .replace(/[^\w\s]/g, '')
             .split(/\s+/)
-            .filter(word => word.length > 3) 
+            .filter(word => word.length > 3)
             .slice(0, 3); // Take first 3 significant words
-        
+
         keywords.push(...words);
     }
-    
+
     return keywords;
 }
 function categorizeVulnerability(title) {
     const lowerTitle = title.toLowerCase();
-    
+
     if (lowerTitle.includes('xss') || lowerTitle.includes('cross-site scripting')) {
         return 'xss';
     } else if (lowerTitle.includes('sql') || lowerTitle.includes('injection')) {
@@ -642,7 +622,7 @@ function categorizeVulnerability(title) {
     } else if (lowerTitle.includes('disclosure') || lowerTitle.includes('exposure')) {
         return 'disclosure';
     }
-    
+
     return 'general';
 }
 
@@ -657,7 +637,7 @@ function checkVulnerabilityTypeMatch(filename, vulnType) {
         'disclosure': ['info', 'leak', 'exposure', 'error'],
         'general': ['vuln', 'exploit', 'poc', 'proof']
     };
-    
+
     const patterns = typePatterns[vulnType] || typePatterns['general'];
     return patterns.some(pattern => filename.includes(pattern));
 }
