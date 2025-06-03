@@ -242,8 +242,8 @@ async function downloadFile(filename, rows, extractedImages = []) {
             };
 
             worksheet.getCell(`A${i}`).value = {
-                formula: `=IF(ISBLANK(C${i}),"",INDEX($Vulnerabilities.A:A,MATCH(TEXT(C${i},"0"),TEXT($Vulnerabilities.B:B,"0"),0)))`
-            };
+            formula: `=IF(ISBLANK(C${i}),"",INDEX(Vulnerabilities!A:A,MATCH(C${i},Vulnerabilities!B:B,0)))`
+        };
         }
 
         logger.info("Data Validation and VLOOKUP added for vulnerability title and ID columns");
