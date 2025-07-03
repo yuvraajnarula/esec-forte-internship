@@ -453,12 +453,18 @@ h1 {
           <td><%= index + 1 %></td>
           <% Object.keys(row).forEach(col => { %>
           <td data-column="<%= col %>">
+            
             <% if (col === "img_ref_address") { %>
               <% if (row[col] === '') { %>
                 <span class="text-muted">No Image Available</span>
+      
               <% } else { %>
                 <a href="/file/image/preview/<%= row[col] %>" target="_blank"><%= row[col] %></a>
               <% } %>
+            <% } else if (col === "vul_id") { %>
+              <span id="vuln_id"></span>
+             <% } else if (col === "vul_title") { %>
+              <span id="vuln_t"><%= row[col]%></span>
             <% } else { %>
               <%= row[col] %>
             <% } %>
@@ -478,7 +484,6 @@ h1 {
 <script>
   let allRows = [];
   let currentSort = { column: null, direction: 'asc' };
-
   // Initialize
   document.addEventListener('DOMContentLoaded', function() {
     // Store all rows data
@@ -499,6 +504,9 @@ h1 {
       return data;
     });
 
+    // Populate vuln_id spans
+    populateVulnIds();
+
     updateStats();
     setupEventListeners();
   });
@@ -515,6 +523,25 @@ h1 {
     // Sorting
     document.querySelectorAll('th[data-sort]').forEach(th => {
       th.addEventListener('click', () => sortTable(th.dataset.sort));
+    });
+  }
+
+  function populateVulnIds() {
+    const vulnerabilities = <%- JSON.stringify(vulnerabilities) %>;
+    const rows = document.querySelectorAll('#dataTable tr');
+
+    rows.forEach(row => {
+      const vulnTitleSpan = row.querySelector('span#vuln_t');
+      const vulnIdSpan = row.querySelector('span#vuln_id');
+
+      if (vulnTitleSpan && vulnIdSpan) {
+        const vulnTitle = vulnTitleSpan.textContent.trim();
+        const index = vulnerabilities.indexOf(vulnTitle);
+
+        if (index !== -1) {
+          vulnIdSpan.textContent = index + 1; // Set index+1
+        }
+      }
     });
   }
 
